@@ -45,15 +45,25 @@ st.sidebar.markdown("---")
 
 DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-try:
-    SUMMARY_CSV = st.secrets["sheets"]["summary_url"]
-except:
-    SUMMARY_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Copy of Summary tracker.csv")
+def get_sheet_config(sheet_key, default_fallback):
+    config_file = os.path.join(os.path.dirname(__file__), "googlesheetlink.csv")
+    if os.path.exists(config_file):
+        try:
+            df = pd.read_csv(config_file)
+            row = df[df['sheet_name'] == sheet_key]
+            if not row.empty:
+                url = str(row.iloc[0]['url']).strip()
+                if url and url.lower() != 'nan':
+                    return url
+                fallback = str(row.iloc[0]['local_fallback']).strip()
+                if fallback and fallback.lower() != 'nan':
+                    return os.path.join(os.path.dirname(__file__), fallback)
+        except Exception:
+            pass
+    return os.path.join(os.path.dirname(__file__), default_fallback)
 
-try:
-    PIPELINE_CSV = st.secrets["sheets"]["pipeline_url"]
-except:
-    PIPELINE_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Pipeline info.csv")
+SUMMARY_CSV = get_sheet_config("summary_tracker", "Summary-tracker - Copy of Summary tracker.csv")
+PIPELINE_CSV = get_sheet_config("pipeline_info", "Summary-tracker - Pipeline info.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
