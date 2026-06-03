@@ -45,8 +45,15 @@ st.sidebar.markdown("---")
 
 DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-SUMMARY_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Copy of Summary tracker.csv")
-PIPELINE_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Pipeline info.csv")
+try:
+    SUMMARY_CSV = st.secrets["sheets"]["summary_url"]
+except:
+    SUMMARY_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Copy of Summary tracker.csv")
+
+try:
+    PIPELINE_CSV = st.secrets["sheets"]["pipeline_url"]
+except:
+    PIPELINE_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Pipeline info.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -136,6 +143,42 @@ section[data-testid="stSidebar"] { background:#0f0f1a; }
 }
 </style>
 """, unsafe_allow_html=True)
+
+import hashlib
+
+# ── Caching & DB Helpers ──────────────────────────────────────────────────────
+@st.cache_data(ttl=600)
+def load_tracker_csv(path_or_url):
+    """Load a CSV securely via Google Sheets API, with local SQLite fallback for high availability."""
+    if str(path_or_url).startswith("http"):
+        # Create a unique table name for the fallback cache
+        url_hash = hashlib.md5(path_or_url.encode()).hexdigest()
+        table_name = f"cache_{url_hash}"
+        
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            conn_gs = st.connection("gsheets", type=GSheetsConnection)
+            df = conn_gs.read(spreadsheet=path_or_url)
+            
+            # Save successful fetch to SQLite for offline resilience
+            with sqlite3.connect(DB_FILE) as sql_conn:
+                df.to_sql(table_name, sql_conn, if_exists='replace', index=False)
+            return df
+        except Exception as e:
+            print(f"⚠️ Google Sheets API failed: {e}")
+            try:
+                with sqlite3.connect(DB_FILE) as sql_conn:
+                    print("🔄 Loading data from local SQLite fallback cache...")
+                    return pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
+            except Exception as sql_e:
+                print(f"⚠️ Fallback cache not found: {sql_e}")
+                return None
+    else:
+        try:
+            return pd.read_csv(path_or_url)
+        except Exception as e:
+            print(f"Error loading {path_or_url}: {e}")
+            return None
 
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 def db():
@@ -544,9 +587,9 @@ elif mode == "🔍 Study Explorer":
             st.caption("Slide links are pulled from the Summary Tracker CSV for this study.")
             # Pull slide link from Summary CSV
             _slide_link = None
-            if os.path.exists(SUMMARY_CSV):
+            _df_sv = load_tracker_csv(SUMMARY_CSV)
+            if _df_sv is not None:
                 try:
-                    _df_sv = pd.read_csv(SUMMARY_CSV)
                     _df_sv.columns = [c.strip() for c in _df_sv.columns]
                     _id_col = next((c for c in _df_sv.columns if "dataset" in c.lower() or "name" in c.lower()), _df_sv.columns[0])
                     _slide_col = next((c for c in _df_sv.columns if "slide" in c.lower() or "ppt" in c.lower()), None)
@@ -620,9 +663,9 @@ elif mode == "🔍 Study Explorer":
                 "Comments":           "Additional notes or caveats about this study's run.",
             }
 
-            if os.path.exists(SUMMARY_CSV):
+            df_sum_all = load_tracker_csv(SUMMARY_CSV)
+            if df_sum_all is not None:
                 try:
-                    df_sum_all = pd.read_csv(SUMMARY_CSV)
                     df_sum_all.columns = [c.strip() for c in df_sum_all.columns]
                     # Try matching on 'Dataset Name' column
                     id_col = next((c for c in df_sum_all.columns if 'dataset' in c.lower() or 'name' in c.lower()), df_sum_all.columns[0])
@@ -668,9 +711,9 @@ elif mode == "🔍 Study Explorer":
                 "Covarites_used":            "Covariates used in the Artemis differential expression model.",
             }
 
-            if os.path.exists(PIPELINE_CSV):
+            df_pi_all = load_tracker_csv(PIPELINE_CSV)
+            if df_pi_all is not None:
                 try:
-                    df_pi_all = pd.read_csv(PIPELINE_CSV)
                     df_pi_all.columns = [c.strip() for c in df_pi_all.columns]
                     id_col_pi = next((c for c in df_pi_all.columns if 'study' in c.lower() or 'id' in c.lower()), df_pi_all.columns[0])
                     df_pi = df_pi_all[df_pi_all[id_col_pi].astype(str).str.strip() == sel_id]
