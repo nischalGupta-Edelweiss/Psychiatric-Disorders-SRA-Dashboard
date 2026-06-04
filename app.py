@@ -199,6 +199,9 @@ def load_tracker_csv(path_or_url, worksheet_name=None):
                 return None
     else:
         try:
+            # Add support for local Excel files
+            if str(path_or_url).lower().endswith(('.xlsx', '.xls')):
+                return pd.read_excel(path_or_url, sheet_name=worksheet_name or 0)
             return pd.read_csv(path_or_url)
         except Exception as e:
             print(f"Error loading {path_or_url}: {e}")
