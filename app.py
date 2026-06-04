@@ -41,6 +41,9 @@ elif _auth_status is None:
 # Logged in — show user info and logout in sidebar
 _authenticator.logout("🚪 Logout", "sidebar")
 st.sidebar.markdown(f"👤 **{_name}**")
+if st.sidebar.button("🔄 Refresh Live Data"):
+    st.cache_data.clear()
+    st.rerun()
 st.sidebar.markdown("---")
 
 DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
