@@ -50,23 +50,30 @@ DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 def get_sheet_config(sheet_key, default_fallback):
     config_file = os.path.join(os.path.dirname(__file__), "googlesheetlink.csv")
+    url = None
+    ws_name = None
+    fallback = os.path.join(os.path.dirname(__file__), default_fallback)
     if os.path.exists(config_file):
         try:
             df = pd.read_csv(config_file)
             row = df[df['sheet_name'] == sheet_key]
             if not row.empty:
-                url = str(row.iloc[0]['url']).strip()
-                if url and url.lower() != 'nan':
-                    return url
-                fallback = str(row.iloc[0]['local_fallback']).strip()
-                if fallback and fallback.lower() != 'nan':
-                    return os.path.join(os.path.dirname(__file__), fallback)
+                _url = str(row.iloc[0]['url']).strip()
+                if _url and _url.lower() != 'nan':
+                    url = _url
+                if 'worksheet_name' in df.columns:
+                    _ws = str(row.iloc[0]['worksheet_name']).strip()
+                    if _ws and _ws.lower() != 'nan':
+                        ws_name = _ws
+                _fb = str(row.iloc[0]['local_fallback']).strip()
+                if _fb and _fb.lower() != 'nan':
+                    fallback = os.path.join(os.path.dirname(__file__), _fb)
         except Exception:
             pass
-    return os.path.join(os.path.dirname(__file__), default_fallback)
+    return url or fallback, ws_name
 
-SUMMARY_CSV = get_sheet_config("summary_tracker", "Summary-tracker - Copy of Summary tracker.csv")
-PIPELINE_CSV = get_sheet_config("pipeline_info", "Summary-tracker - Pipeline info.csv")
+SUMMARY_CSV, SUMMARY_WS = get_sheet_config("summary_tracker", "Summary-tracker - Copy of Summary tracker.csv")
+PIPELINE_CSV, PIPELINE_WS = get_sheet_config("pipeline_info", "Summary-tracker - Pipeline info.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -161,17 +168,21 @@ import hashlib
 
 # ── Caching & DB Helpers ──────────────────────────────────────────────────────
 @st.cache_data(ttl=600)
-def load_tracker_csv(path_or_url):
+def load_tracker_csv(path_or_url, worksheet_name=None):
     """Load a CSV securely via Google Sheets API, with local SQLite fallback for high availability."""
     if str(path_or_url).startswith("http"):
         # Create a unique table name for the fallback cache
-        url_hash = hashlib.md5(path_or_url.encode()).hexdigest()
+        hash_str = f"{path_or_url}_{worksheet_name}" if worksheet_name else path_or_url
+        url_hash = hashlib.md5(hash_str.encode()).hexdigest()
         table_name = f"cache_{url_hash}"
         
         try:
             from streamlit_gsheets import GSheetsConnection
             conn_gs = st.connection("gsheets", type=GSheetsConnection)
-            df = conn_gs.read(spreadsheet=path_or_url)
+            if worksheet_name:
+                df = conn_gs.read(spreadsheet=path_or_url, worksheet=worksheet_name)
+            else:
+                df = conn_gs.read(spreadsheet=path_or_url)
             
             # Save successful fetch to SQLite for offline resilience
             with sqlite3.connect(DB_FILE) as sql_conn:
@@ -600,7 +611,7 @@ elif mode == "🔍 Study Explorer":
             st.caption("Slide links are pulled from the Summary Tracker CSV for this study.")
             # Pull slide link from Summary CSV
             _slide_link = None
-            _df_sv = load_tracker_csv(SUMMARY_CSV)
+            _df_sv = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS)
             if _df_sv is not None:
                 try:
                     _df_sv.columns = [c.strip() for c in _df_sv.columns]
@@ -676,7 +687,7 @@ elif mode == "🔍 Study Explorer":
                 "Comments":           "Additional notes or caveats about this study's run.",
             }
 
-            df_sum_all = load_tracker_csv(SUMMARY_CSV)
+            df_sum_all = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS)
             if df_sum_all is not None:
                 try:
                     df_sum_all.columns = [c.strip() for c in df_sum_all.columns]
@@ -724,7 +735,7 @@ elif mode == "🔍 Study Explorer":
                 "Covarites_used":            "Covariates used in the Artemis differential expression model.",
             }
 
-            df_pi_all = load_tracker_csv(PIPELINE_CSV)
+            df_pi_all = load_tracker_csv(PIPELINE_CSV, PIPELINE_WS)
             if df_pi_all is not None:
                 try:
                     df_pi_all.columns = [c.strip() for c in df_pi_all.columns]
