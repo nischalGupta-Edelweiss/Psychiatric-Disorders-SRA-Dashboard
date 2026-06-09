@@ -1,3 +1,4 @@
 sheet_name,url,worksheet_name,local_fallback
 summary_tracker,https://docs.google.com/spreadsheets/d/1_8f2OgtLXYCywcCYLkAci5E_p_X3TyWmtFobnuk2CrQ/edit?gid=475938078#gid=475938078,Dashboard used Summary tracker,Summary-tracker.xlsx
 pipeline_info,https://docs.google.com/spreadsheets/d/1_8f2OgtLXYCywcCYLkAci5E_p_X3TyWmtFobnuk2CrQ/edit?gid=1289743746#gid=1289743746,Study info,Summary-tracker.xlsx
+issue_studies,https://docs.google.com/spreadsheets/d/1_8f2OgtLXYCywcCYLkAci5E_p_X3TyWmtFobnuk2CrQ/edit,Issue Studies,issue_studies_fallback.csv

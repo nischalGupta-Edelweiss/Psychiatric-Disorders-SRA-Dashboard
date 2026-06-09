@@ -1,5 +1,0 @@
-Study_id,publication_link,publication_comparision ,publication_covariates,ARTEMIS_Run_ID,ARTEMIS_Main_comparision,Covarites_used
-SRP225011,https://pubmed.ncbi.nlm.nih.gov/32304628/,Depression vs Control,Sex,20260508_114303_SRP225011-Depression-2,Depression vs Control,Sex
-SRP323876,https://pubmed.ncbi.nlm.nih.gov/34848679/,Chronic vs acute cortisol,"None, as the cohort is age and sex matched",20260508_094621_SRP323876-MDD,"MDD Non-responsive_Control vs Healthy_Control, MDD Non-responsive_Chronic Cortisol vs Healthy_Chronic Cortisol, MDD Non-responsive_Chronic Ethanol vs Healthy_Chronic Ethanol, MDD Responsive_Control vs Healthy_Control, MDD Responsive_Chronic Cortisol vs Healthy_Chronic Ethanol, MDD Responsive_Chronic Ethanol vs Healthy_Chronic Ethanol","None, as the cohort is age and sex matched"
-SRP354339,https://pubmed.ncbi.nlm.nih.gov/35280164/,CRH+ interneurons in MDD subjects versus controls,"sex, age, postmortem interval and brain pH",20260507_104732_SRP354339-MDD,sgACC_MDD vs sgACC_control,"sex, age, postmortem interval and brain pH"
-SRP401314, https://pubmed.ncbi.nlm.nih.gov/37205394/,,,,,

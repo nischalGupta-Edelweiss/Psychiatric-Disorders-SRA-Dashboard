@@ -74,6 +74,7 @@ def get_sheet_config(sheet_key, default_fallback):
 
 SUMMARY_CSV, SUMMARY_WS = get_sheet_config("summary_tracker", "Summary-tracker - Copy of Summary tracker.csv")
 PIPELINE_CSV, PIPELINE_WS = get_sheet_config("pipeline_info", "Summary-tracker - Pipeline info.csv")
+ISSUE_CSV,   ISSUE_WS   = get_sheet_config("issue_studies",  "issue_studies_fallback.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -233,7 +234,7 @@ st.markdown("""
 
 # ── Sidebar Nav ───────────────────────────────────────────────────────────────
 st.sidebar.markdown("## 🧭 Navigation")
-mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer"])
+mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer", "⚠️ Issue Studies"])
 
 n_st, n_sa, n_kw = metrics()
 st.sidebar.markdown("---")
@@ -782,3 +783,202 @@ elif mode == "🔍 Study Explorer":
         st.warning("No studies match the current filters.")
 
     conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODE 3 — ISSUE STUDIES
+# ─────────────────────────────────────────────────────────────────────────────
+elif mode == "⚠️ Issue Studies":
+    st.markdown("## ⚠️ Issue Studies Tracker")
+    st.markdown(
+        '<p style="color:#94a3b8;margin-top:-.8rem;margin-bottom:1.5rem;">'
+        'Studies flagged as unprocessable — tracking root causes, priority, and resolution status.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Load data ────────────────────────────────────────────────────────────
+    df_issues = load_tracker_csv(ISSUE_CSV, ISSUE_WS)
+
+    if df_issues is None or df_issues.empty:
+        st.warning(
+            "No issue studies data found. "
+            "Please add an **'Issue Studies'** worksheet to your Google Sheet "
+            "or populate `issue_studies_fallback.csv`."
+        )
+        st.markdown(
+            "**Expected columns:** `Study_ID · Disease_Category · Issue_Type · "
+            "Issue_Description · Date_Flagged · Flagged_By · Priority · Resolution_Status · Notes`"
+        )
+    else:
+        df_issues.columns = [c.strip() for c in df_issues.columns]
+
+        # ── Normalise key column names (flexible header matching) ─────────────
+        col_map = {}
+        for c in df_issues.columns:
+            cl = c.lower().replace(" ", "_")
+            if "study" in cl or "id" in cl:       col_map.setdefault("Study_ID", c)
+            if "disease" in cl or "category" in cl: col_map.setdefault("Disease_Category", c)
+            if "issue_type" in cl or ("type" in cl and "issue" in cl): col_map.setdefault("Issue_Type", c)
+            if "description" in cl or "reason" in cl: col_map.setdefault("Issue_Description", c)
+            if "date" in cl or "flagged" in cl:   col_map.setdefault("Date_Flagged", c)
+            if "by" in cl or "analyst" in cl:     col_map.setdefault("Flagged_By", c)
+            if "priority" in cl:                  col_map.setdefault("Priority", c)
+            if "status" in cl or "resolution" in cl: col_map.setdefault("Resolution_Status", c)
+            if "note" in cl or "comment" in cl:   col_map.setdefault("Notes", c)
+
+        def gc(key):
+            """Get actual column name from normalised key, or None."""
+            return col_map.get(key)
+
+        # ── Summary metric cards ──────────────────────────────────────────────
+        total_issues = len(df_issues)
+        open_issues  = 0
+        resolved     = 0
+        high_pri     = 0
+        if gc("Resolution_Status"):
+            open_issues = (df_issues[gc("Resolution_Status")].astype(str).str.lower().str.contains("open")).sum()
+            resolved    = (df_issues[gc("Resolution_Status")].astype(str).str.lower().str.contains("resolved|closed|done")).sum()
+        if gc("Priority"):
+            high_pri = (df_issues[gc("Priority")].astype(str).str.lower() == "high").sum()
+
+        st.markdown(f"""
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">Total Flagged</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fde68a,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{total_issues}</div>
+            <div class="card-sub">Studies with issues</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Open Issues</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fca5a5,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{open_issues}</div>
+            <div class="card-sub">Pending resolution</div>
+          </div>
+          <div class="card">
+            <div class="card-label">High Priority</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fdba74,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{high_pri}</div>
+            <div class="card-sub">Needs urgent action</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Resolved</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#6ee7b7,#10b981);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{resolved}</div>
+            <div class="card-sub">Completed / closed</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Issue Type breakdown chart ────────────────────────────────────────
+        if gc("Issue_Type"):
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📊 Issues by Type")
+            df_type_count = df_issues[gc("Issue_Type")].value_counts().reset_index()
+            df_type_count.columns = ["Issue Type", "Count"]
+            fig_iss = px.bar(
+                df_type_count, x="Count", y="Issue Type", orientation="h",
+                color="Issue Type",
+                color_discrete_sequence=["#f97316", "#ef4444", "#eab308", "#8b5cf6", "#3b82f6", "#10b981"],
+                text="Count",
+                labels={"Count": "Number of Studies"},
+            )
+            fig_iss.update_traces(textposition="outside")
+            fig_iss.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#e2e8f0", showlegend=False,
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                yaxis=dict(showgrid=False), margin=dict(t=10, b=10),
+            )
+            st.plotly_chart(fig_iss, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Sidebar filters ───────────────────────────────────────────────────
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🎛️ Filters")
+
+        search_iss = st.sidebar.text_input("🔍 Search Study ID / Description")
+
+        if gc("Issue_Type"):
+            issue_types = ["All"] + sorted(df_issues[gc("Issue_Type")].dropna().unique().tolist())
+            sel_type = st.sidebar.selectbox("Issue Type", issue_types)
+        else:
+            sel_type = "All"
+
+        if gc("Priority"):
+            priorities = ["All"] + sorted(df_issues[gc("Priority")].dropna().unique().tolist())
+            sel_pri = st.sidebar.selectbox("Priority", priorities)
+        else:
+            sel_pri = "All"
+
+        if gc("Resolution_Status"):
+            statuses = ["All"] + sorted(df_issues[gc("Resolution_Status")].dropna().unique().tolist())
+            sel_status = st.sidebar.selectbox("Resolution Status", statuses)
+        else:
+            sel_status = "All"
+
+        # ── Apply filters ─────────────────────────────────────────────────────
+        df_filt = df_issues.copy()
+        if search_iss:
+            mask = df_filt.astype(str).apply(
+                lambda col: col.str.contains(search_iss, case=False, na=False)
+            ).any(axis=1)
+            df_filt = df_filt[mask]
+        if sel_type   != "All" and gc("Issue_Type"):        df_filt = df_filt[df_filt[gc("Issue_Type")] == sel_type]
+        if sel_pri    != "All" and gc("Priority"):          df_filt = df_filt[df_filt[gc("Priority")] == sel_pri]
+        if sel_status != "All" and gc("Resolution_Status"): df_filt = df_filt[df_filt[gc("Resolution_Status")] == sel_status]
+
+        st.info(f"⚠️ **{len(df_filt)}** issue studies match your filters")
+
+        # ── Per-study detail cards ────────────────────────────────────────────
+        PRIORITY_COLORS = {"high": "#ef4444", "medium": "#f97316", "low": "#eab308"}
+        STATUS_COLORS   = {"open": "#ef4444", "in progress": "#f97316",
+                           "resolved": "#10b981", "closed": "#10b981", "done": "#10b981"}
+
+        for _, row_i in df_filt.iterrows():
+            study_id_val = str(row_i.get(gc("Study_ID"), "Unknown")).strip() if gc("Study_ID") else "Unknown"
+            issue_type   = str(row_i.get(gc("Issue_Type"), "")).strip()          if gc("Issue_Type") else ""
+            description  = str(row_i.get(gc("Issue_Description"), "")).strip()   if gc("Issue_Description") else ""
+            disease_cat  = str(row_i.get(gc("Disease_Category"), "")).strip()    if gc("Disease_Category") else ""
+            date_flag    = str(row_i.get(gc("Date_Flagged"), "")).strip()         if gc("Date_Flagged") else ""
+            flagged_by   = str(row_i.get(gc("Flagged_By"), "")).strip()           if gc("Flagged_By") else ""
+            priority_val = str(row_i.get(gc("Priority"), "")).strip()             if gc("Priority") else ""
+            status_val   = str(row_i.get(gc("Resolution_Status"), "")).strip()    if gc("Resolution_Status") else ""
+            notes_val    = str(row_i.get(gc("Notes"), "")).strip()                if gc("Notes") else ""
+
+            pri_color = PRIORITY_COLORS.get(priority_val.lower(), "#64748b")
+            sts_color = STATUS_COLORS.get(status_val.lower(), "#64748b")
+
+            clean = lambda v: "" if v in ("nan", "N/A", "None") else v
+            description = clean(description)
+            notes_val   = clean(notes_val)
+            disease_cat = clean(disease_cat)
+
+            st.markdown(f"""
+            <div class="glass" style="border-left:4px solid {pri_color};margin-bottom:1rem;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem;">
+                <div>
+                  <code style="font-size:1.05rem;color:#f472b6;font-weight:700;">{study_id_val}</code>
+                  {'<span style="margin-left:.7rem;font-size:.8rem;color:#94a3b8;">' + disease_cat + '</span>' if disease_cat else ''}
+                </div>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                  {'<span style="background:rgba(239,68,68,.15);border:1px solid ' + pri_color + ';border-radius:999px;padding:.2rem .75rem;font-size:.72rem;font-weight:600;color:' + pri_color + ';">' + priority_val + ' Priority</span>' if priority_val else ''}
+                  {'<span style="background:rgba(16,185,129,.1);border:1px solid ' + sts_color + ';border-radius:999px;padding:.2rem .75rem;font-size:.72rem;font-weight:600;color:' + sts_color + ';">' + status_val + '</span>' if status_val else ''}
+                </div>
+              </div>
+              {'<div style="margin-top:.6rem;"><span style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;">Issue Type</span><br><span style="color:#e2e8f0;">' + issue_type + '</span></div>' if issue_type else ''}
+              {'<div style="margin-top:.5rem;"><span style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;">Description</span><br><span style="color:#cbd5e1;font-size:.9rem;line-height:1.6;">' + description + '</span></div>' if description else ''}
+              {'<div style="margin-top:.5rem;"><span style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;">Notes</span><br><span style="color:#94a3b8;font-size:.85rem;font-style:italic;">' + notes_val + '</span></div>' if notes_val else ''}
+              <div style="margin-top:.8rem;display:flex;gap:2rem;flex-wrap:wrap;font-size:.8rem;color:#64748b;">
+                {'<span>📅 Flagged: <strong>' + date_flag + '</strong></span>' if date_flag else ''}
+                {'<span>👤 By: <strong>' + flagged_by + '</strong></span>' if flagged_by else ''}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Full table + download ─────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("##### 📋 All Issue Studies (Tabular View)")
+        st.dataframe(df_filt.reset_index(drop=True), use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Export Issue Studies (.csv)",
+            df_filt.to_csv(index=False).encode(),
+            file_name="issue_studies_export.csv",
+            mime="text/csv",
+        )
