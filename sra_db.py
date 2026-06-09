@@ -124,9 +124,105 @@ def init_db():
         )
     """)
 
+    # Create issue_studies table — tracks studies that cannot be processed
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS issue_studies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            study_id TEXT NOT NULL,
+            disease_category TEXT,
+            issue_type TEXT,
+            issue_description TEXT,
+            date_flagged TEXT,
+            flagged_by TEXT,
+            priority TEXT,
+            resolution_status TEXT,
+            notes TEXT,
+            last_updated TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
     print("Database tables initialized successfully.")
+
+
+def populate_issue_studies(excel_path=None, worksheet="Issue_tracker"):
+    """
+    Seed the issue_studies table from a local Excel worksheet.
+    Safe to call multiple times — uses INSERT OR IGNORE on study_id.
+    """
+    import os
+
+    if excel_path is None:
+        excel_path = os.path.join(
+            os.path.dirname(__file__),
+            "Summary-tracker.xlsx"
+        )
+
+    if not os.path.exists(excel_path):
+        print(f"⚠️ Excel file not found: {excel_path}")
+        return
+
+    try:
+        df = pd.read_excel(excel_path, sheet_name=worksheet)
+    except Exception as e:
+        print(f"⚠️ Could not read worksheet '{worksheet}' from {excel_path}: {e}")
+        return
+
+    df.columns = [c.strip() for c in df.columns]
+
+    # Flexible column mapping
+    def fc(df, *keywords):
+        for kw in keywords:
+            match = [c for c in df.columns if kw.lower() in c.lower()]
+            if match:
+                return match[0]
+        return None
+
+    col_study   = fc(df, "study", "id")
+    col_disease = fc(df, "disease", "category")
+    col_type    = fc(df, "issue_type", "type")
+    col_desc    = fc(df, "description", "reason")
+    col_date    = fc(df, "date", "flagged")
+    col_by      = fc(df, "flagged_by", "analyst", "by")
+    col_pri     = fc(df, "priority")
+    col_status  = fc(df, "status", "resolution")
+    col_notes   = fc(df, "notes", "comment")
+
+    if not col_study:
+        print("⚠️ Could not find a Study ID column in the worksheet.")
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    records = []
+    for _, row in df.iterrows():
+        sid = str(row.get(col_study, "")).strip()
+        if not sid or sid == "nan":
+            continue
+        records.append((
+            sid,
+            str(row.get(col_disease, "") if col_disease else ""),
+            str(row.get(col_type,    "") if col_type    else ""),
+            str(row.get(col_desc,    "") if col_desc    else ""),
+            str(row.get(col_date,    "") if col_date    else ""),
+            str(row.get(col_by,      "") if col_by      else ""),
+            str(row.get(col_pri,     "") if col_pri     else ""),
+            str(row.get(col_status,  "") if col_status  else ""),
+            str(row.get(col_notes,   "") if col_notes   else ""),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+
+    cursor.executemany("""
+        INSERT INTO issue_studies (
+            study_id, disease_category, issue_type, issue_description,
+            date_flagged, flagged_by, priority, resolution_status, notes, last_updated
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, records)
+    conn.commit()
+    conn.close()
+    print(f"✅ Seeded {len(records)} issue study records into the database.")
 
 def populate_database():
     """
@@ -324,3 +420,4 @@ def populate_database():
 if __name__ == "__main__":
     init_db()
     populate_database()
+    populate_issue_studies()

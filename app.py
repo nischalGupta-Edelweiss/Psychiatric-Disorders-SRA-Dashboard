@@ -829,10 +829,97 @@ elif mode == "⚠️ Issue Studies":
         unsafe_allow_html=True,
     )
 
-    # ── Load data ────────────────────────────────────────────────────────────
+    # ── Load data: 4-tier chain ───────────────────────────────────────────────
+    # Tier 1 → Google Sheets  (via load_tracker_csv)
+    # Tier 2 → issue_studies SQLite table
+    # Tier 3 → local Excel fallback
+    # On any successful load, sync result back to issue_studies DB table
+
+    def _sync_issues_to_db(df):
+        """Upsert a DataFrame into the issue_studies SQLite table."""
+        try:
+            df.columns = [c.strip() for c in df.columns]
+
+            def fc(*kws):
+                for kw in kws:
+                    m = [c for c in df.columns if kw.lower() in c.lower()]
+                    if m: return m[0]
+                return None
+
+            col_study  = fc("study", "id")
+            col_dis    = fc("disease", "category")
+            col_type   = fc("issue_type", "type")
+            col_desc   = fc("description", "reason")
+            col_date   = fc("date", "flagged")
+            col_by     = fc("flagged_by", "analyst", "by")
+            col_pri    = fc("priority")
+            col_status = fc("status", "resolution")
+            col_notes  = fc("notes", "comment")
+
+            if not col_study:
+                return
+
+            with sqlite3.connect(DB_FILE) as conn:
+                # Ensure table exists
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS issue_studies (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        study_id TEXT NOT NULL,
+                        disease_category TEXT, issue_type TEXT,
+                        issue_description TEXT, date_flagged TEXT,
+                        flagged_by TEXT, priority TEXT,
+                        resolution_status TEXT, notes TEXT,
+                        last_updated TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                # Replace all rows with fresh data
+                conn.execute("DELETE FROM issue_studies")
+                for _, r in df.iterrows():
+                    sid = str(r.get(col_study, "")).strip()
+                    if not sid or sid == "nan":
+                        continue
+                    conn.execute("""
+                        INSERT INTO issue_studies (
+                            study_id, disease_category, issue_type, issue_description,
+                            date_flagged, flagged_by, priority, resolution_status,
+                            notes, last_updated
+                        ) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
+                    """, (
+                        sid,
+                        str(r.get(col_dis,    "") if col_dis    else ""),
+                        str(r.get(col_type,   "") if col_type   else ""),
+                        str(r.get(col_desc,   "") if col_desc   else ""),
+                        str(r.get(col_date,   "") if col_date   else ""),
+                        str(r.get(col_by,     "") if col_by     else ""),
+                        str(r.get(col_pri,    "") if col_pri    else ""),
+                        str(r.get(col_status, "") if col_status else ""),
+                        str(r.get(col_notes,  "") if col_notes  else ""),
+                    ))
+                conn.commit()
+        except Exception as _e:
+            print(f"⚠️ DB sync failed: {_e}")
+
+    def _load_issues_from_db():
+        """Read the issue_studies table from SQLite."""
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                df = pd.read_sql("SELECT * FROM issue_studies ORDER BY id", conn)
+                if not df.empty:
+                    print("🗄️ Loaded issue studies from SQLite DB table")
+                    return df
+        except Exception as _e:
+            print(f"⚠️ DB read failed: {_e}")
+        return None
+
+    # Try Sheets → DB table → local Excel
     df_issues = load_tracker_csv(ISSUE_CSV, ISSUE_WS, local_fallback=ISSUE_FB)
+    if df_issues is not None and not df_issues.empty:
+        _sync_issues_to_db(df_issues)          # keep DB in sync
+    else:
+        df_issues = _load_issues_from_db()     # fall back to DB table
 
     if df_issues is None or df_issues.empty:
+
         st.warning(
             "No issue studies data found. "
             "Please add an **'Issue Studies'** worksheet to your Google Sheet "
