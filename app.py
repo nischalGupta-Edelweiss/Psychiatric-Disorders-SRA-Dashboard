@@ -70,11 +70,12 @@ def get_sheet_config(sheet_key, default_fallback):
                     fallback = os.path.join(os.path.dirname(__file__), _fb)
         except Exception:
             pass
-    return url or fallback, ws_name
+    # Returns: (primary_source, worksheet_name, local_fallback_path)
+    return url or fallback, ws_name, fallback
 
-SUMMARY_CSV, SUMMARY_WS = get_sheet_config("summary_tracker", "Summary-tracker - Copy of Summary tracker.csv")
-PIPELINE_CSV, PIPELINE_WS = get_sheet_config("pipeline_info", "Summary-tracker - Pipeline info.csv")
-ISSUE_CSV,   ISSUE_WS   = get_sheet_config("issue_studies",  "issue_studies_fallback.csv")
+SUMMARY_CSV, SUMMARY_WS, SUMMARY_FB = get_sheet_config("summary_tracker", "Summary-tracker.xlsx")
+PIPELINE_CSV, PIPELINE_WS, PIPELINE_FB = get_sheet_config("pipeline_info", "Summary-tracker.xlsx")
+ISSUE_CSV,   ISSUE_WS,   ISSUE_FB   = get_sheet_config("issue_studies",  "Summary-tracker.xlsx")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -169,44 +170,76 @@ import hashlib
 
 # ── Caching & DB Helpers ──────────────────────────────────────────────────────
 @st.cache_data(ttl=600)
-def load_tracker_csv(path_or_url, worksheet_name=None):
-    """Load a CSV securely via Google Sheets API, with local SQLite fallback for high availability."""
+def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
+    """Load data via Google Sheets API with a 3-tier fallback:
+    1. Google Sheets API (live)
+    2. SQLite cache (last successful fetch)
+    3. Local Excel/CSV file (offline safety net)
+    """
+    import re
+
+    def _read_local(fb_path, ws):
+        """Read local Excel or CSV file."""
+        if not fb_path or not os.path.exists(fb_path):
+            return None
+        try:
+            if str(fb_path).lower().endswith(('.xlsx', '.xls')):
+                # Try the specific worksheet tab first, then sheet index 0
+                try:
+                    df = pd.read_excel(fb_path, sheet_name=ws)
+                    print(f"📂 Loaded '{ws}' tab from local Excel: {os.path.basename(fb_path)}")
+                    return df
+                except Exception:
+                    df = pd.read_excel(fb_path, sheet_name=0)
+                    print(f"📂 Loaded first tab from local Excel: {os.path.basename(fb_path)}")
+                    return df
+            return pd.read_csv(fb_path)
+        except Exception as e:
+            print(f"⚠️ Local fallback read failed ({fb_path}): {e}")
+            return None
+
     if str(path_or_url).startswith("http"):
-        # Create a unique table name for the fallback cache
-        hash_str = f"{path_or_url}_{worksheet_name}" if worksheet_name else path_or_url
-        url_hash = hashlib.md5(hash_str.encode()).hexdigest()
+        # Strip ?gid=...#gid=... from URL — let worksheet= param handle tab selection
+        clean_url = re.sub(r'[?#].*$', '', str(path_or_url)).rstrip('/')
+        clean_url = clean_url + "/export?format=csv" if False else clean_url  # keep as sheets URL
+
+        # Unique SQLite table name (keyed on original URL + worksheet)
+        hash_str   = f"{path_or_url}_{worksheet_name}" if worksheet_name else path_or_url
+        url_hash   = hashlib.md5(hash_str.encode()).hexdigest()
         table_name = f"cache_{url_hash}"
-        
+
+        # ── Tier 1: Google Sheets API ────────────────────────────────────────
         try:
             from streamlit_gsheets import GSheetsConnection
             conn_gs = st.connection("gsheets", type=GSheetsConnection)
             if worksheet_name:
-                df = conn_gs.read(spreadsheet=path_or_url, worksheet=worksheet_name)
+                df = conn_gs.read(spreadsheet=clean_url, worksheet=worksheet_name)
             else:
-                df = conn_gs.read(spreadsheet=path_or_url)
-            
-            # Save successful fetch to SQLite for offline resilience
+                df = conn_gs.read(spreadsheet=clean_url)
+            # Persist successful fetch to SQLite
             with sqlite3.connect(DB_FILE) as sql_conn:
                 df.to_sql(table_name, sql_conn, if_exists='replace', index=False)
+            print(f"✅ Loaded '{worksheet_name}' from Google Sheets")
             return df
         except Exception as e:
             print(f"⚠️ Google Sheets API failed: {e}")
-            try:
-                with sqlite3.connect(DB_FILE) as sql_conn:
-                    print("🔄 Loading data from local SQLite fallback cache...")
-                    return pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
-            except Exception as sql_e:
-                print(f"⚠️ Fallback cache not found: {sql_e}")
-                return None
-    else:
+
+        # ── Tier 2: SQLite cache ─────────────────────────────────────────────
         try:
-            # Add support for local Excel files
-            if str(path_or_url).lower().endswith(('.xlsx', '.xls')):
-                return pd.read_excel(path_or_url, sheet_name=worksheet_name or 0)
-            return pd.read_csv(path_or_url)
-        except Exception as e:
-            print(f"Error loading {path_or_url}: {e}")
-            return None
+            with sqlite3.connect(DB_FILE) as sql_conn:
+                df = pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
+                print(f"🔄 Loaded '{worksheet_name}' from SQLite cache")
+                return df
+        except Exception as sql_e:
+            print(f"⚠️ SQLite cache not found: {sql_e}")
+
+        # ── Tier 3: Local Excel / CSV fallback ───────────────────────────────
+        print(f"📂 Trying local fallback for '{worksheet_name}'...")
+        return _read_local(local_fallback, worksheet_name)
+
+    else:
+        # Direct local file path
+        return _read_local(path_or_url, worksheet_name)
 
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 def db():
@@ -615,7 +648,7 @@ elif mode == "🔍 Study Explorer":
             st.caption("Slide links are pulled from the Summary Tracker CSV for this study.")
             # Pull slide link from Summary CSV
             _slide_link = None
-            _df_sv = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS)
+            _df_sv = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
             if _df_sv is not None:
                 try:
                     _df_sv.columns = [c.strip() for c in _df_sv.columns]
@@ -691,7 +724,7 @@ elif mode == "🔍 Study Explorer":
                 "Comments":           "Additional notes or caveats about this study's run.",
             }
 
-            df_sum_all = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS)
+            df_sum_all = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
             if df_sum_all is not None:
                 try:
                     df_sum_all.columns = [c.strip() for c in df_sum_all.columns]
@@ -739,7 +772,7 @@ elif mode == "🔍 Study Explorer":
                 "Covarites_used":            "Covariates used in the Artemis differential expression model.",
             }
 
-            df_pi_all = load_tracker_csv(PIPELINE_CSV, PIPELINE_WS)
+            df_pi_all = load_tracker_csv(PIPELINE_CSV, PIPELINE_WS, local_fallback=PIPELINE_FB)
             if df_pi_all is not None:
                 try:
                     df_pi_all.columns = [c.strip() for c in df_pi_all.columns]
@@ -797,7 +830,7 @@ elif mode == "⚠️ Issue Studies":
     )
 
     # ── Load data ────────────────────────────────────────────────────────────
-    df_issues = load_tracker_csv(ISSUE_CSV, ISSUE_WS)
+    df_issues = load_tracker_csv(ISSUE_CSV, ISSUE_WS, local_fallback=ISSUE_FB)
 
     if df_issues is None or df_issues.empty:
         st.warning(
