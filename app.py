@@ -167,16 +167,85 @@ section[data-testid="stSidebar"] { background:#0f0f1a; }
 """, unsafe_allow_html=True)
 
 import hashlib
+import re
+
+# ── gspread client (built once, cached) ───────────────────────────────────────
+@st.cache_resource
+def _get_gspread_client():
+    """Return an authorised gspread client using the service-account from secrets."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        raw = dict(st.secrets["connections"]["gsheets"])
+        raw.pop("type", None)           # gspread builds its own ServiceAccountCredentials
+        raw.pop("universe_domain", None)
+
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds  = Credentials.from_service_account_info(raw, scopes=scopes)
+        client = gspread.authorize(creds)
+        print("✅ gspread client initialised")
+        return client
+    except Exception as e:
+        print(f"⚠️ gspread init failed: {e}")
+        return None
+
+
+def _fetch_gspread(spreadsheet_url, worksheet_name):
+    """
+    Fetch a worksheet via gspread.
+    - Extracts the spreadsheet ID from the URL.
+    - Selects the tab by GID (from URL ?gid=…) first; falls back to name match.
+    Returns a DataFrame, or None on failure.
+    """
+    try:
+        client = _get_gspread_client()
+        if client is None:
+            return None
+
+        import gspread
+
+        # Extract spreadsheet ID from URL
+        m_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', spreadsheet_url)
+        if not m_id:
+            print(f"⚠️ Could not parse spreadsheet ID from: {spreadsheet_url}")
+            return None
+        spreadsheet_id = m_id.group(1)
+
+        # Extract GID from URL (preferred — avoids name-matching issues)
+        m_gid = re.search(r'gid=(\d+)', spreadsheet_url)
+        target_gid = int(m_gid.group(1)) if m_gid else None
+
+        sh = client.open_by_key(spreadsheet_id)
+
+        # Pick worksheet: by GID first, then by name, then first sheet
+        ws = None
+        if target_gid is not None:
+            ws = next((w for w in sh.worksheets() if w.id == target_gid), None)
+        if ws is None and worksheet_name:
+            try:
+                ws = sh.worksheet(worksheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                pass
+        if ws is None:
+            ws = sh.sheet1
+
+        data = ws.get_all_records()
+        df   = pd.DataFrame(data)
+        print(f"✅ gspread fetched '{ws.title}' (gid={ws.id}) — {len(df)} rows")
+        return df
+    except Exception as e:
+        print(f"⚠️ gspread fetch failed: {e}")
+        return None
+
 
 # ── Caching & DB Helpers ──────────────────────────────────────────────────────
 @st.cache_data(ttl=600)
 def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
-    """Load data via Google Sheets API with a 3-tier fallback:
-    1. Google Sheets API (live)
-    2. SQLite cache (last successful fetch)
-    3. Local Excel/CSV file (offline safety net)
-    """
-    import re
+    """Load data via gspread → SQLite cache → local Excel (3-tier fallback)."""
 
     def _read_local(fb_path, ws):
         """Read local Excel or CSV file."""
@@ -184,7 +253,6 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
             return None
         try:
             if str(fb_path).lower().endswith(('.xlsx', '.xls')):
-                # Try the specific worksheet tab first, then sheet index 0
                 try:
                     df = pd.read_excel(fb_path, sheet_name=ws)
                     print(f"📂 Loaded '{ws}' tab from local Excel: {os.path.basename(fb_path)}")
@@ -199,42 +267,34 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
             return None
 
     if str(path_or_url).startswith("http"):
-        # Strip ?gid=...#gid=... from URL — let worksheet= param handle tab selection
-        clean_url = re.sub(r'[?#].*$', '', str(path_or_url)).rstrip('/')
-        clean_url = clean_url + "/export?format=csv" if False else clean_url  # keep as sheets URL
-
-        # Unique SQLite table name (keyed on original URL + worksheet)
+        # Unique SQLite table name (keyed on URL + worksheet)
         hash_str   = f"{path_or_url}_{worksheet_name}" if worksheet_name else path_or_url
         url_hash   = hashlib.md5(hash_str.encode()).hexdigest()
         table_name = f"cache_{url_hash}"
 
-        # ── Tier 1: Google Sheets API ────────────────────────────────────────
-        try:
-            from streamlit_gsheets import GSheetsConnection
-            conn_gs = st.connection("gsheets", type=GSheetsConnection)
-            if worksheet_name:
-                df = conn_gs.read(spreadsheet=clean_url, worksheet=worksheet_name)
-            else:
-                df = conn_gs.read(spreadsheet=clean_url)
-            # Persist successful fetch to SQLite
-            with sqlite3.connect(DB_FILE) as sql_conn:
-                df.to_sql(table_name, sql_conn, if_exists='replace', index=False)
-            print(f"✅ Loaded '{worksheet_name}' from Google Sheets")
+        # ── Tier 1: gspread (Google Sheets API via service account) ──────────
+        df = _fetch_gspread(path_or_url, worksheet_name)
+        if df is not None and not df.empty:
+            # Persist to SQLite cache
+            try:
+                with sqlite3.connect(DB_FILE) as sql_conn:
+                    df.to_sql(table_name, sql_conn, if_exists='replace', index=False)
+            except Exception:
+                pass
             return df
-        except Exception as e:
-            print(f"⚠️ Google Sheets API failed: {e}")
 
-        # ── Tier 2: SQLite cache ─────────────────────────────────────────────
+        # ── Tier 2: SQLite cache (last successful fetch) ──────────────────────
         try:
             with sqlite3.connect(DB_FILE) as sql_conn:
                 df = pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
-                print(f"🔄 Loaded '{worksheet_name}' from SQLite cache")
-                return df
+                if not df.empty:
+                    print(f"🔄 Loaded '{worksheet_name}' from SQLite cache")
+                    return df
         except Exception as sql_e:
             print(f"⚠️ SQLite cache not found: {sql_e}")
 
         # ── Tier 3: Local Excel / CSV fallback ───────────────────────────────
-        print(f"📂 Trying local fallback for '{worksheet_name}'...")
+        print(f"📂 Trying local Excel fallback for '{worksheet_name}'...")
         return _read_local(local_fallback, worksheet_name)
 
     else:
