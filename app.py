@@ -76,6 +76,7 @@ def get_sheet_config(sheet_key, default_fallback):
 SUMMARY_CSV, SUMMARY_WS, SUMMARY_FB = get_sheet_config("summary_tracker", "Summary-tracker.xlsx")
 PIPELINE_CSV, PIPELINE_WS, PIPELINE_FB = get_sheet_config("pipeline_info", "Summary-tracker.xlsx")
 ISSUE_CSV,   ISSUE_WS,   ISSUE_FB   = get_sheet_config("issue_studies",  "Summary-tracker.xlsx")
+BIGDATA_CSV, BIGDATA_WS, BIGDATA_FB = get_sheet_config("all_studies_bigdata", "all_studies_fallback.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -327,7 +328,7 @@ st.markdown("""
 
 # ── Sidebar Nav ───────────────────────────────────────────────────────────────
 st.sidebar.markdown("## 🧭 Navigation")
-mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer", "⚠️ Issue Studies"])
+mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer", "⚠️ Issue Studies", "📂 All Studies (Big Data)"])
 
 n_st, n_sa, n_kw = metrics()
 st.sidebar.markdown("---")
@@ -1237,4 +1238,157 @@ elif mode == "⚠️ Issue Studies":
             file_name="issue_studies_export.csv",
             mime="text/csv",
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODE 4 — ALL STUDIES (BIG DATA)
+# ─────────────────────────────────────────────────────────────────────────────
+elif mode == "📂 All Studies (Big Data)":
+    st.markdown("## 📂 All Studies (Big Data)")
+    st.markdown("Explore and filter the comprehensive set of study samples from which our curated dashboard studies are derived.")
+
+    # 1. Load data
+    with st.spinner("Loading Big Data..."):
+        df_big = load_tracker_csv(BIGDATA_CSV, BIGDATA_WS, local_fallback=BIGDATA_FB)
+
+    if df_big is None or df_big.empty:
+        st.warning("⚠️ Could not load Big Data sheet. Please check your configuration, internet connection, or fallback file.")
+    else:
+        # Standardize column names
+        df_big.columns = [c.strip() for c in df_big.columns]
+
+        # 2. Query SQLite for curated study list
+        curated_ids = set()
+        try:
+            with db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT study_id FROM studies")
+                curated_ids = {r[0].strip() for r in cursor.fetchall() if r[0]}
+        except Exception as e:
+            print(f"Error loading curated study IDs: {e}")
+
+        # 3. Add Curated Status calculation
+        study_col = 'studyId_ena_sra' if 'studyId_ena_sra' in df_big.columns else df_big.columns[0]
+        df_big['Curated Status'] = df_big[study_col].apply(
+            lambda x: "Curated" if str(x).strip() in curated_ids else "Non-Curated"
+        )
+
+        # 4. Filters in the Sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🎛️ Big Data Filters")
+        search_q = st.sidebar.text_input("🔍 Search (ID / Title / Tissue / Phenotype)", "")
+
+        curated_options = ["All", "Curated", "Non-Curated"]
+        sel_curated = st.sidebar.selectbox("Curated Status", curated_options, index=0)
+
+        # Defensive extraction of unique options
+        def get_unique_options(col_name):
+            if col_name in df_big.columns:
+                return sorted([str(x).strip() for x in df_big[col_name].dropna().unique() if str(x).strip() != 'nan' and str(x).strip() != ''])
+            return []
+
+        organisms = get_unique_options('organism_name')
+        sel_organism = st.sidebar.selectbox("🧬 Organism", ["All"] + organisms, index=0)
+
+        phenotypes = get_unique_options('phenotype')
+        sel_phenotype = st.sidebar.selectbox("🧠 Phenotype", ["All"] + phenotypes, index=0)
+
+        tissues = get_unique_options('tissue')
+        sel_tissue = st.sidebar.selectbox("🔬 Tissue", ["All"] + tissues, index=0)
+
+        layouts = get_unique_options('library_layout')
+        sel_layout = st.sidebar.selectbox("⛓️ Library Layout", ["All"] + layouts, index=0)
+
+        # 5. Apply Filtering
+        df_filt = df_big.copy()
+
+        if sel_curated == "Curated":
+            df_filt = df_filt[df_filt['Curated Status'] == "Curated"]
+        elif sel_curated == "Non-Curated":
+            df_filt = df_filt[df_filt['Curated Status'] == "Non-Curated"]
+
+        if sel_organism != "All":
+            df_filt = df_filt[df_filt['organism_name'].astype(str).str.strip() == sel_organism]
+
+        if sel_phenotype != "All":
+            df_filt = df_filt[df_filt['phenotype'].astype(str).str.strip() == sel_phenotype]
+
+        if sel_tissue != "All":
+            df_filt = df_filt[df_filt['tissue'].astype(str).str.strip() == sel_tissue]
+
+        if sel_layout != "All":
+            df_filt = df_filt[df_filt['library_layout'].astype(str).str.strip() == sel_layout]
+
+        if search_q:
+            q = search_q.lower()
+            mask = pd.Series(False, index=df_filt.index)
+            for c in [study_col, 'sampleId_srr', 'study_title', 'tissue', 'cell_type', 'phenotype']:
+                if c in df_filt.columns:
+                    mask = mask | df_filt[c].astype(str).str.lower().str.contains(q, na=False)
+            df_filt = df_filt[mask]
+
+        # 6. Create metric cards
+        total_samples = len(df_filt)
+        unique_studies = df_filt[study_col].nunique() if study_col in df_filt.columns else 0
+        curated_count_in_filt = df_filt[df_filt['Curated Status'] == 'Curated'][study_col].nunique() if study_col in df_filt.columns else 0
+        
+        total_reads = pd.to_numeric(df_filt['total_number_of_reads'], errors='coerce').sum() if 'total_number_of_reads' in df_filt.columns else 0
+        avg_read_len = pd.to_numeric(df_filt['read_length'], errors='coerce').mean() if 'read_length' in df_filt.columns else 0
+
+        reads_str = f"{int(total_reads):,}" if pd.notna(total_reads) and total_reads > 0 else "N/A"
+        avg_len_str = f"{avg_read_len:.1f} bp" if pd.notna(avg_read_len) and avg_read_len > 0 else "N/A"
+
+        curated_pct_str = f"{curated_count_in_filt / unique_studies * 100:.1f}%" if unique_studies > 0 else "0.0%"
+
+        st.markdown(f"""
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">Total Samples</div>
+            <div class="card-val">{total_samples:,}</div>
+            <div class="card-sub">▲ In filtered selection</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Unique Studies</div>
+            <div class="card-val">{unique_studies:,}</div>
+            <div class="card-sub">▲ ENA/SRA study accessions</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Curated Studies</div>
+            <div class="card-val">{curated_count_in_filt:,} / {unique_studies}</div>
+            <div class="card-sub">● {curated_pct_str} of filtered studies</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Avg Read Length</div>
+            <div class="card-val">{avg_len_str}</div>
+            <div class="card-sub">● Total Reads: {reads_str}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 7. Render styled DataFrame and CSV export
+        st.markdown("---")
+        st.markdown("### 📋 Big Data Sample Entries")
+        
+        st.info("💡 **Tip:** Studies matching `Curated` status are loaded into the main **🔍 Study Explorer** database with full metadata, sample sheets, and linked presentations.")
+
+        st.download_button(
+            "📥 Export Filtered Big Data (.csv)",
+            df_filt.to_csv(index=False).encode(),
+            file_name="filtered_bigdata_samples.csv",
+            mime="text/csv",
+        )
+
+        cols_to_display = [
+            'Curated Status', study_col, 'sampleId_srr', 'study_title', 
+            'organism_name', 'tissue', 'cell_type', 'phenotype', 'library_strategy',
+            'library_layout', 'total_number_of_reads', 'read_length'
+        ]
+        cols_to_display = [c for c in cols_to_display if c in df_filt.columns]
+
+        st.dataframe(
+            df_filt[cols_to_display].reset_index(drop=True),
+            use_container_width=True,
+            hide_index=True
+        )
+
 
