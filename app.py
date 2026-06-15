@@ -1201,29 +1201,31 @@ elif mode == "⚠️ Issue Studies":
                 sev_badge = (f'<span style="background:{ibc};border:1px solid {ic};border-radius:999px;'
                              f'padding:.15rem .6rem;font-size:.7rem;font-weight:700;color:{ic};">{sev}</span>'
                              if sev else "")
-                rows_html += f"""
-                <div style="display:flex;align-items:flex-start;gap:.75rem;padding:.55rem 0;
-                            border-bottom:1px solid rgba(255,255,255,0.05);">
-                  <div style="flex:0 0 auto;padding-top:.1rem;">{sev_badge}</div>
-                  <div style="flex:1;">
-                    <span style="color:#e2e8f0;font-weight:600;font-size:.88rem;">{issue}</span>
-                    {"<br><span style='color:#94a3b8;font-size:.82rem;font-style:italic;'>" + comment + "</span>" if comment else ""}
-                  </div>
-                </div>"""
+                comment_html = f"<br><span style='color:#94a3b8;font-size:.82rem;font-style:italic;'>{comment}</span>" if comment else ""
+                rows_html += (
+                    f'<div style="display:flex;align-items:flex-start;gap:.75rem;padding:.55rem 0;'
+                    f'border-bottom:1px solid rgba(255,255,255,0.05);">'
+                    f'<div style="flex:0 0 auto;padding-top:.1rem;">{sev_badge}</div>'
+                    f'<div style="flex:1;">'
+                    f'<span style="color:#e2e8f0;font-weight:600;font-size:.88rem;">{issue}</span>'
+                    f'{comment_html}'
+                    f'</div>'
+                    f'</div>'
+                )
 
-            st.markdown(f"""
-            <div class="glass" style="border-left:4px solid {border_col};margin-bottom:1.1rem;">
-              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem;">
-                <code style="font-size:1.1rem;color:#f472b6;font-weight:700;">{study_id}</code>
-                <div>{pubmed_btn}{geo_btn}</div>
-              </div>
-              <div style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;
-                          letter-spacing:.05em;margin-bottom:.25rem;">
-                {len(grp)} issue{"s" if len(grp)>1 else ""}
-              </div>
-              {rows_html}
-            </div>
-            """, unsafe_allow_html=True)
+            card_html = (
+                f'<div class="glass" style="border-left:4px solid {border_col};margin-bottom:1.1rem;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem;">'
+                f'<code style="font-size:1.1rem;color:#f472b6;font-weight:700;">{study_id}</code>'
+                f'<div>{pubmed_btn}{geo_btn}</div>'
+                f'</div>'
+                f'<div style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem;">'
+                f'{len(grp)} issue{"s" if len(grp)>1 else ""}'
+                f'</div>'
+                f'{rows_html}'
+                f'</div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
         # ── Full table + download ─────────────────────────────────────────────
         st.markdown("---")
