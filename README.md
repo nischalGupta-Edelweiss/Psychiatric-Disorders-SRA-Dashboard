@@ -1,98 +1,98 @@
 # 🧠 Psychiatric Disorders SRA Dashboard
 
-An interactive, web-based metadata exploration and pipeline-tracking dashboard for RNA-seq studies related to Psychiatric Disorders (Schizophrenia, Bipolar Disorder, Major Depressive Disorder, MDD).
+An interactive, web-based metadata exploration and pipeline-tracking dashboard for RNA-seq studies related to Psychiatric Disorders — Schizophrenia, Bipolar Disorder, MDD, and Depression.
 
-Built for the AbbVie Bioinformatics team to monitor pipeline status, explore study metadata, track flagged studies, and interrogate a large-scale all-studies dataset — all live from Google Sheets.
+Built for the **AbbVie Bioinformatics team** to monitor pipeline status, explore study metadata, track flagged studies, and interrogate a large-scale all-studies dataset — all synced live from Google Sheets.
 
 ---
 
-## ✨ Key Features
+## ✨ Features
 
 | Feature | Description |
 |---|---|
-| 🔐 **Secure Auth** | `streamlit-authenticator` login with bcrypt-hashed credentials in `users.yaml` |
-| 🔄 **Live Google Sheets Sync** | 3-tier fallback loader: Google Sheets API → SQLite cache → local Excel/CSV |
-| 📊 **Overview & Analytics** | Live pipeline status, disease distributions, Big Data landscape charts |
-| 🔍 **Study Explorer** | Filter 82+ studies by disease, sample size, or keyword; view sample sheets, slides, metadata |
-| ⚠️ **Issue Tracker** | Flags and severity tracking for studies with known processing problems |
-| 📂 **Big Data Explorer** | Browse and filter 5,249+ samples from the all-studies sheet with export |
-| 🎛️ **Refresh Live Data** | One-click sidebar button clears cache and re-fetches all Google Sheets |
+| 🔐 **Secure Auth** | Login with bcrypt-hashed credentials via `users.yaml` |
+| 🔄 **Live Google Sheets Sync** | 3-tier fallback: Google Sheets API → SQLite cache → local Excel/CSV |
+| 📊 **Overview & Analytics** | Live pipeline status, Big Data landscape, disease distribution charts |
+| 🔍 **Study Explorer** | Filter 82+ studies; view sample sheets, slides links, and full metadata |
+| ⚠️ **Issue Tracker** | Severity-coded flagged studies synced from Google Sheets |
+| 📂 **Big Data Explorer** | Browse and filter 5,249+ samples with one-click CSV export |
+| 🔃 **Refresh Live Data** | Sidebar button clears cache and re-fetches all Google Sheets instantly |
 
 ---
 
-## 🏗️ Architecture & Data Flow
+## 🚀 Quick Start — Run with Docker (Recommended)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    External Data Sources                     │
-│                                                             │
-│  Google Sheets API (gspread + service account)              │
-│  ├── Summary tracker   (gid=967699804)  → Pipeline status   │
-│  ├── Study info        (gid=1289743746) → Publication links  │
-│  ├── Issue_tracker     (gid=617382454)  → Flagged studies   │
-│  └── Big_data          (gid=411528296)  → 5,249 samples     │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Tier 1: gspread fetch
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   SQLite Cache Layer                         │
-│              sra_metadata.db                                │
-│  ┌──────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────┐  │
-│  │ studies  │ │sample_sheet│ │sample_metada│ │issue_stud│  │
-│  │  (95)    │ │   s (4108) │ │     ta      │ │  ies(30) │  │
-│  └──────────┘ └────────────┘ └─────────────┘ └──────────┘  │
-│              + cache_<md5> tables per sheet URL             │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Tier 2: SQLite / Tier 3: Local Excel
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Streamlit UI (app.py)                     │
-│                                                             │
-│  📊 Overview & Analytics                                    │
-│     ├── Live total datasets (from Summary tracker)          │
-│     ├── Study Status / Analyst breakdown charts             │
-│     └── Big Data: tissues, sex, library strategy, read len  │
-│                                                             │
-│  🔍 Study Explorer                                          │
-│     ├── Filters: disease, database, flags, sample size      │
-│     └── Tabs: Sample Sheet · Sample Info · Slides ·         │
-│               Full Metadata · Execution Stats · Analysis    │
-│                                                             │
-│  ⚠️  Issue Studies Tracker                                  │
-│     └── Severity-coded cards + SQLite-synced table          │
-│                                                             │
-│  📂 All Studies (Big Data)                                  │
-│     └── 5,249 rows, filterable, exportable as CSV           │
-└─────────────────────────────────────────────────────────────┘
-```
+> **No Python or pip setup needed.** Docker handles everything.
 
----
+### Prerequisites
+- [Docker](https://docs.docker.com/get-docker/) installed
+- A `secrets.toml` file with Google Sheets service account credentials *(get this from your team admin)*
 
-## 🛠️ Technology Stack
-
-| Layer | Technology |
-|---|---|
-| UI Framework | [Streamlit](https://streamlit.io/) ≥ 1.32 |
-| Visualizations | [Plotly Express](https://plotly.com/python/plotly-express/) |
-| Data Processing | Pandas ≥ 2.0, NumPy |
-| Database | SQLite3 (`sra_metadata.db`) |
-| Google Sheets | `gspread` + `google-auth` (service account) |
-| Authentication | `streamlit-authenticator` ≥ 0.4.2, `bcrypt` |
-| Excel fallback | `openpyxl` |
-| Environment | [Pixi](https://prefix.dev/) / `pip` + `requirements.txt` |
-
----
-
-## 🚀 Setup & Installation
-
-### Option 1: Pixi (Recommended for local dev)
+### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/Surajsharma95/Psychiatric-Disorders-SRA-Dashboard.git
+git clone https://github.com/surajkumarsharma-bxEn/Psychiatric-Disorders-SRA-Dashboard.git
 cd Psychiatric-Disorders-SRA-Dashboard
+```
+
+### Step 2 — Add your secrets file
+Create `.streamlit/secrets.toml` with the Google Sheets credentials provided by your team admin:
+
+```bash
+mkdir -p .streamlit
+```
+
+```toml
+# .streamlit/secrets.toml
+[connections.gsheets]
+type = "service_account"
+project_id = "your-gcp-project-id"
+private_key_id = "your-key-id"
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "sra-dashboard-bot@your-project.iam.gserviceaccount.com"
+client_id = "your-client-id"
+token_uri = "https://oauth2.googleapis.com/token"
+```
+
+### Step 3 — Build and run
+```bash
+docker compose up --build
+```
+
+Open **http://localhost:8080** in your browser. ✅
+
+> **Login credentials** — contact your team admin for the username and password.
+
+### Stop the container
+```bash
+docker compose down
+```
+
+---
+
+## 🐳 Docker — Manual Commands (without docker compose)
+
+```bash
+# Build the image
+docker build -t sra-dashboard .
+
+# Run the container
+docker run -p 8080:8080 \
+  -v ./. streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro \
+  sra-dashboard
+
+# Open http://localhost:8080
+```
+
+---
+
+## 💻 Local Development (Without Docker)
+
+### Option A — Using Pixi
+```bash
 pixi run streamlit run app.py
 ```
 
-### Option 2: pip
+### Option B — Using pip
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
@@ -102,22 +102,10 @@ streamlit run app.py
 
 ## ☁️ Streamlit Community Cloud Deployment
 
-1. Push repo to GitHub (`main` branch).
-2. Connect repo in [share.streamlit.io](https://share.streamlit.io).
-3. Set **Secrets** in the Streamlit Cloud dashboard (paste the contents of `.streamlit/secrets.toml`):
-
-```toml
-[connections.gsheets]
-type = "service_account"
-project_id = "your-gcp-project-id"
-private_key_id = "..."
-private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-client_email = "sra-dashboard-bot@your-project.iam.gserviceaccount.com"
-client_id = "..."
-token_uri = "https://oauth2.googleapis.com/token"
-```
-
-> **Important:** Never commit `.streamlit/secrets.toml` — it is already in `.gitignore`.
+1. Push repo to GitHub (`prod` branch).
+2. Connect at [share.streamlit.io](https://share.streamlit.io).
+3. Set **Secrets** in the Streamlit Cloud dashboard (paste contents of `.streamlit/secrets.toml`).
+4. Any push to `prod` triggers an automatic redeployment.
 
 ---
 
@@ -125,77 +113,74 @@ token_uri = "https://oauth2.googleapis.com/token"
 
 ```
 Psychiatric-Disorders-SRA-Dashboard/
-├── app.py                        # Main Streamlit app (all 4 views)
-├── sra_db.py                     # DB initialiser & seeder (run once locally)
-├── sra_metadata.db               # SQLite cache (auto-generated, git-ignored)
-├── googlesheetlink.csv           # Maps sheet keys → Google Sheet URLs + worksheets
-├── studies_82.csv                # Master study list (seed data)
-├── users.yaml                    # Auth credentials (hashed passwords)
-├── requirements.txt              # pip dependencies for cloud deployment
-├── pixi.toml                     # Pixi environment spec (local dev)
+├── app.py                        # Main Streamlit application (all 4 views)
+├── sra_db.py                     # SQLite DB initialiser & seeder
+├── googlesheetlink.csv           # Maps sheet keys → Google Sheet URLs & worksheets
+├── users.yaml                    # Auth credentials (bcrypt hashed)
+├── requirements.txt              # pip dependencies
+├── Dockerfile                    # Production multi-stage Docker build
+├── docker-compose.yml            # One-command Docker run with secrets mount
+├── .dockerignore                 # Excludes secrets, DB, cache from Docker build
+├── pixi.toml                     # Pixi env spec for local development
 ├── Summary-tracker.xlsx          # Local Excel fallback for Google Sheets data
 ├── all_studies_fallback.csv      # Local CSV fallback for Big Data sheet
 ├── .streamlit/
 │   ├── config.toml               # Streamlit theme & server config
-│   └── secrets.toml              # GCP service account keys (git-ignored)
-├── local_scripts/
-│   ├── build_master_metadata.py  # Compile local TSVs → SQLite sample_metadata
-│   ├── fetch_srp_metadata.py     # Fetch NCBI E-Utils XML metadata
-│   └── parse_local_metadata.py   # Parse a single local TSV
-└── download_sra_metadata.py      # Download SRA metadata via pysradb CLI
+│   └── secrets.toml              # GCP service account keys ← NOT in git
+└── local_scripts/
+    ├── build_master_metadata.py  # Compile local TSVs → SQLite sample_metadata
+    ├── fetch_srp_metadata.py     # Fetch NCBI E-Utils XML metadata
+    └── parse_local_metadata.py   # Parse a single local metadata TSV
 ```
 
 ---
 
-## 🔄 Google Sheets Configuration (`googlesheetlink.csv`)
+## 🔄 Google Sheets Configuration
 
-The app reads this CSV to know which Google Sheet tab to fetch for each data source:
+Controlled by `googlesheetlink.csv` — edit this to point to different sheets:
 
-| sheet_name | worksheet_name | purpose |
+| sheet_name | worksheet_name | Purpose |
 |---|---|---|
-| `summary_tracker` | `Summary tracker` | Pipeline status, analyst assignment, slides links |
-| `pipeline_info` | `Study info` | Publication links, ARTEMIS run IDs, covariates |
-| `issue_studies` | `Issue_tracker` | Flagged studies with severity and comments |
+| `summary_tracker` | `Summary tracker` | Pipeline status, analyst info, slides links |
+| `pipeline_info` | `Study info` | Publication links, ARTEMIS run IDs |
+| `issue_studies` | `Issue_tracker` | Flagged studies with severity & comments |
 | `all_studies_bigdata` | `Big_data` | 5,249 samples with tissue, cell type, read length |
-
-To add a new sheet: add a row to `googlesheetlink.csv` and use `load_tracker_csv(url, worksheet, fallback)` in `app.py`.
 
 ---
 
 ## 🗄️ Database Seeding (Local Only)
 
-The SQLite database is **not committed** to Git. Seed it locally before running:
+The SQLite DB is auto-generated and **not committed** to Git. Seed it locally once:
 
 ```bash
 python sra_db.py
 ```
 
-This will:
-- Create all tables (`studies`, `sample_sheets`, `sample_metadata`, `issue_studies`)
-- Ingest 95 studies from `studies_82.csv`
-- Scan `../../samplesheet/` for sample sheet TSVs (4,108 samples across 80 sheets)
-- Seed 30 issue records from the local Excel fallback
+This creates `sra_metadata.db` with studies, sample sheets, and issue records.
 
 ---
 
-## 👥 User Management
-
-Credentials are stored in `users.yaml` as bcrypt hashes. To add a new user:
+## 👥 Adding New Users
 
 ```bash
-python generate_hashes.py
+python generate_hashes.py   # generates a bcrypt hash for a new password
 ```
 
-Then paste the generated hash into `users.yaml`:
-
+Add the hash to `users.yaml`:
 ```yaml
 credentials:
   usernames:
     newuser:
       name: New User
       email: newuser@abbvie.com
-      password: "$2b$12$<generated_hash>"
+      password: "$2b$12$<hash_from_generate_hashes.py>"
 ```
+
+---
+
+## 📦 Do I Need Docker Hub?
+
+**No.** The `Dockerfile` is in this repo — anyone with Docker can build the image themselves using the steps above. Docker Hub is only needed if you want to distribute a pre-built image without requiring others to build it.
 
 ---
 
@@ -206,4 +191,4 @@ credentials:
 | 1.0 | 2024 | Initial dashboard with SQLite + local Excel |
 | 1.5 | 2025-05 | Google Sheets 3-tier fallback, Refresh button |
 | 1.6 | 2025-06 | Big Data explorer (5,249 samples), Issue tracker sync |
-| 1.7 | 2026-06 | Enhanced Overview with live pipeline & Big Data charts, dynamic summary banner, slides link from Summary tracker |
+| 1.7 | 2026-06 | Enhanced Overview charts, live pipeline banner, Docker support |
