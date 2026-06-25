@@ -260,21 +260,47 @@ def _fetch_gspread(spreadsheet_url, worksheet_name):
 def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
     """Load data via gspread → SQLite cache → local Excel (3-tier fallback)."""
 
+    def _clean_df(df):
+        if df is not None and not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            for col in df.columns:
+                try:
+                    if df[col].dtype == 'object':
+                        df[col] = df[col].apply(lambda val: str(val).strip() if pd.notna(val) and val is not None else val)
+                except Exception:
+                    pass
+        return df
+
     def _read_local(fb_path, ws):
         """Read local Excel or CSV file."""
         if not fb_path or not os.path.exists(fb_path):
             return None
         try:
             if str(fb_path).lower().endswith(('.xlsx', '.xls')):
+                # Smart sheet resolution:
+                # If ws is "Summary tracker" but the local Excel file has a tab named "Dashboard used Summary tracker"
+                # which contains the actual dataset list (while "Summary tracker" is just weekly/daily summaries),
+                # resolve to "Dashboard used Summary tracker" dynamically.
+                xls = pd.ExcelFile(fb_path)
+                target_ws = ws
+                if ws == "Summary tracker" and "Dashboard used Summary tracker" in xls.sheet_names:
+                    try:
+                        df_test = pd.read_excel(fb_path, sheet_name=ws)
+                        cols_lower = [str(c).lower() for c in df_test.columns]
+                        if not any("dataset" in c or "name" in c for c in cols_lower):
+                            target_ws = "Dashboard used Summary tracker"
+                    except Exception:
+                        pass
+
                 try:
-                    df = pd.read_excel(fb_path, sheet_name=ws)
-                    print(f"📂 Loaded '{ws}' tab from local Excel: {os.path.basename(fb_path)}")
-                    return df
+                    df = pd.read_excel(fb_path, sheet_name=target_ws)
+                    print(f"📂 Loaded '{target_ws}' tab from local Excel: {os.path.basename(fb_path)}")
+                    return _clean_df(df)
                 except Exception:
                     df = pd.read_excel(fb_path, sheet_name=0)
                     print(f"📂 Loaded first tab from local Excel: {os.path.basename(fb_path)}")
-                    return df
-            return pd.read_csv(fb_path)
+                    return _clean_df(df)
+            return _clean_df(pd.read_csv(fb_path))
         except Exception as e:
             print(f"⚠️ Local fallback read failed ({fb_path}): {e}")
             return None
@@ -288,6 +314,7 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
         # ── Tier 1: gspread (Google Sheets API via service account) ──────────
         df = _fetch_gspread(path_or_url, worksheet_name)
         if df is not None and not df.empty:
+            df = _clean_df(df)
             # Persist to SQLite cache
             try:
                 with sqlite3.connect(DB_FILE) as sql_conn:
@@ -302,7 +329,7 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
                 df = pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
                 if not df.empty:
                     print(f"🔄 Loaded '{worksheet_name}' from SQLite cache")
-                    return df
+                    return _clean_df(df)
         except Exception as sql_e:
             print(f"⚠️ SQLite cache not found: {sql_e}")
 
@@ -313,6 +340,7 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
     else:
         # Direct local file path
         return _read_local(path_or_url, worksheet_name)
+
 
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 def db():

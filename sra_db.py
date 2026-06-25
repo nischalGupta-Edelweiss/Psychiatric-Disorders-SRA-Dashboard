@@ -287,72 +287,71 @@ def populate_database():
     except Exception as e:
         print(f"Error loading studies metadata: {e}")
 
-    # 2. Parse and ingest sample sheets
+    # 2. Parse and ingest sample sheets (optional — not present on external machines)
     if not os.path.exists(SAMPLESHEETS_DIR):
-        print(f"Error: Sample sheets folder {SAMPLESHEETS_DIR} not found!")
-        conn.close()
-        return
-
-    print(f"Scanning sample sheets inside {SAMPLESHEETS_DIR}...")
-    sample_files = [f for f in os.listdir(SAMPLESHEETS_DIR) if f.endswith("_samplesheet.csv")]
-    
-    insert_sample_stmt = """
-        INSERT OR REPLACE INTO sample_sheets (
-            sample_id, study_id, fastq_1, fastq_2, strandedness
-        ) VALUES (?, ?, ?, ?, ?)
-    """
-    
-    total_samples = 0
-    for filename in sample_files:
-        # Extract study ID, e.g. SRP246389_samplesheet.csv -> SRP246389
-        study_id = filename.split("_")[0]
-        filepath = os.path.join(SAMPLESHEETS_DIR, filename)
+        print(f"⚠️ Sample sheets folder not found — skipping sample ingestion. Studies will still load.")
+        # Don't return — continue seeding the rest of the DB (issues, PPTs, etc.)
+    else:
+        sample_files = [f for f in os.listdir(SAMPLESHEETS_DIR) if f.endswith("_samplesheet.csv")]
         
-        # Read the sample sheet CSV
-        try:
-            with open(filepath, 'r') as csvfile:
-                reader = csv.DictReader(csvfile)
-                sample_records = []
-                for row in reader:
-                    sample_id = row.get('sample', '').strip()
-                    if not sample_id:
-                        continue
-                    
-                    sample_records.append((
-                        sample_id,
-                        study_id,
-                        row.get('fastq_1', ''),
-                        row.get('fastq_2', ''),
-                        row.get('strandedness', 'auto')
-                    ))
-                
-                if sample_records:
-                    cursor.executemany(insert_sample_stmt, sample_records)
-                    total_samples += len(sample_records)
-                    
-                    # Ensure the study exists in the 'studies' table even if not in finalList.csv
-                    cursor.execute("SELECT 1 FROM studies WHERE study_id = ?", (study_id,))
-                    if not cursor.fetchone():
-                        cursor.execute("""
-                            INSERT INTO studies (
-                                study_id, title, abstract, organism, sample_size, 
-                                database_source, has_schizophrenia, has_bipolar, 
-                                has_depression, has_mdd, has_bipolar_dep, treatment
-                            )
-                            VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '')
-                        """, (
-                            study_id,
-                            f"Study {study_id}",
-                            "",
-                            "Homo sapiens", # default
-                            len(sample_records),
-                            "Custom Ingest"
-                        ))
-        except Exception as e:
-            print(f"Error parsing file {filename}: {e}")
+        insert_sample_stmt = """
+            INSERT OR REPLACE INTO sample_sheets (
+                sample_id, study_id, fastq_1, fastq_2, strandedness
+            ) VALUES (?, ?, ?, ?, ?)
+        """
+        
+        total_samples = 0
+        for filename in sample_files:
+            # Extract study ID, e.g. SRP246389_samplesheet.csv -> SRP246389
+            study_id = filename.split("_")[0]
+            filepath = os.path.join(SAMPLESHEETS_DIR, filename)
             
-    conn.commit()
-    print(f"Ingested {total_samples} samples across {len(sample_files)} sample sheets.")
+            # Read the sample sheet CSV
+            try:
+                with open(filepath, 'r') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    sample_records = []
+                    for row in reader:
+                        sample_id = row.get('sample', '').strip()
+                        if not sample_id:
+                            continue
+                        
+                        sample_records.append((
+                            sample_id,
+                            study_id,
+                            row.get('fastq_1', ''),
+                            row.get('fastq_2', ''),
+                            row.get('strandedness', 'auto')
+                        ))
+                    
+                    if sample_records:
+                        cursor.executemany(insert_sample_stmt, sample_records)
+                        total_samples += len(sample_records)
+                        
+                        # Ensure the study exists in the 'studies' table even if not in finalList.csv
+                        cursor.execute("SELECT 1 FROM studies WHERE study_id = ?", (study_id,))
+                        if not cursor.fetchone():
+                            cursor.execute("""
+                                INSERT INTO studies (
+                                    study_id, title, abstract, organism, sample_size, 
+                                    database_source, has_schizophrenia, has_bipolar, 
+                                    has_depression, has_mdd, has_bipolar_dep, treatment
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', '', '')
+                            """, (
+                                study_id,
+                                f"Study {study_id}",
+                                "",
+                                "Homo sapiens", # default
+                                len(sample_records),
+                                "Custom Ingest"
+                            ))
+            except Exception as e:
+                print(f"Error parsing file {filename}: {e}")
+                
+        conn.commit()
+        print(f"Ingested {total_samples} samples across {len(sample_files)} sample sheets.")
+
     
     # 3. Add initial default PPT presentation linking for test references
     cursor.execute("SELECT COUNT(*) FROM linked_ppts")
@@ -373,8 +372,24 @@ def populate_database():
     if os.path.exists(PIPELINE_CSV):
         print(f"Loading pipeline info from {PIPELINE_CSV}...")
         try:
-            df_pipe = pd.read_csv(PIPELINE_CSV)
-            df_pipe.columns = [c.strip() for c in df_pipe.columns]
+            if str(PIPELINE_CSV).lower().endswith(('.xlsx', '.xls')):
+                # Check sheets
+                xls = pd.ExcelFile(PIPELINE_CSV)
+                ws = "Study info" if "Study info" in xls.sheet_names else 0
+                df_pipe = pd.read_excel(PIPELINE_CSV, sheet_name=ws)
+            else:
+                df_pipe = pd.read_csv(PIPELINE_CSV)
+                
+            df_pipe.columns = [str(c).strip() for c in df_pipe.columns]
+            
+            # Clean string values in cells
+            for col in df_pipe.columns:
+                try:
+                    if df_pipe[col].dtype == 'object':
+                        df_pipe[col] = df_pipe[col].apply(lambda val: str(val).strip() if pd.notna(val) and val is not None else val)
+                except Exception:
+                    pass
+
             insert_pipe_stmt = """
                 INSERT OR REPLACE INTO pipeline_info (
                     study_id, be_start_date, be_end_date, artemis_start_date,
@@ -384,8 +399,10 @@ def populate_database():
             """
             pipe_records = []
             for _, row in df_pipe.iterrows():
-                sid = str(row.get('SRPID', row.get('study_id', ''))).strip()
-                if not sid or sid == 'nan': continue
+                # Allow different naming variants (Study_id, study_id, SRPID)
+                sid = next((str(row.get(col)).strip() for col in df_pipe.columns if col.lower() in ('study_id', 'study_id', 'srpid', 'study id')), '').strip()
+                if not sid or sid.lower() == 'nan':
+                    continue
                 
                 # Helper for int parsing
                 try: 
@@ -402,8 +419,8 @@ def populate_database():
                     samples_num,
                     str(row.get('Remove Sample', '')),
                     str(row.get('Region', '')),
-                    str(row.get('Main Comparison', '')),
-                    str(row.get('Covariates', ''))
+                    str(row.get('Main Comparison', row.get('ARTEMIS_Main_comparision', row.get('publication_comparision', '')))),
+                    str(row.get('Covariates', row.get('Covarites_used', row.get('publication_covariates', ''))))
                 ))
             cursor.executemany(insert_pipe_stmt, pipe_records)
             conn.commit()
