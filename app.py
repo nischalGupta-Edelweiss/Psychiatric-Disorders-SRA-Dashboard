@@ -342,21 +342,27 @@ st.sidebar.markdown(f"**🏷️ Disease Categories** `{n_kw}`")
 if mode == "📊 Overview & Analytics":
     st.markdown("## 📈 Overview & Analytics")
 
-    # Top-level processing summary
-    st.markdown("""
-    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.8rem;padding:1.2rem 1.5rem;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;">
-      <div style="flex:1;border-right:1px solid rgba(255,255,255,0.05);">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Total Datasets</span><br>
-        <strong style="font-size:1.8rem;color:#f1f5f9;">82</strong>
-      </div>
-      <div style="flex:1;border-right:1px solid rgba(255,255,255,0.05);">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">BE Complete</span><br>
-        <strong style="font-size:1.8rem;color:#6ee7b7;">42</strong>
-      </div>
-      <div style="flex:1;">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Artemis Complete</span><br>
-        <strong style="font-size:1.8rem;color:#a5b4fc;">34</strong>
-      </div>
+    # ── Live summary banner from Google Sheet ─────────────────────────────────
+    _df_sum = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
+    _total = len(_df_sum) if _df_sum is not None else 0
+    _art_done = 0
+    _status_counts = {}
+    if _df_sum is not None and not _df_sum.empty:
+        _df_sum.columns = [c.strip() for c in _df_sum.columns]
+        # Status column for the bar chart below
+        _status_col = next((c for c in _df_sum.columns if "status" in c.lower()), None)
+        if _status_col:
+            _status_counts = _df_sum[_status_col].value_counts().to_dict()
+        # Artemis Complete = rows where "End Date Artemis run" has a real date value
+        _art_end_col = next((c for c in _df_sum.columns if "end" in c.lower() and "artemis" in c.lower()), None)
+        if _art_end_col:
+            _art_done = int(_df_sum[_art_end_col].astype(str).str.strip()
+                            .apply(lambda x: x not in ('', 'nan', 'NaT', 'None')).sum())
+
+    st.markdown(f"""
+    <div style="margin-bottom:1.8rem;padding:1.2rem 1.5rem;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;display:inline-block;">
+      <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Total Datasets</span><br>
+      <strong style="font-size:1.8rem;color:#f1f5f9;">{_total}</strong>
     </div>
     """, unsafe_allow_html=True)
 
@@ -487,6 +493,163 @@ if mode == "📊 Overview & Analytics":
                            legend=dict(orientation='h', y=-0.15, x=.5, xanchor='center'))
         st.plotly_chart(fig5, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Section: Pipeline Status from Summary Tracker ────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Pipeline Progress — from Summary Tracker")
+
+    if _df_sum is not None and not _df_sum.empty:
+        _p1, _p2 = st.columns(2)
+
+        with _p1:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📊 Study Status Breakdown")
+            if _status_col and _status_counts:
+                _sc_df = pd.DataFrame(list(_status_counts.items()), columns=['Status','Count'])
+                _sc_df = _sc_df[_sc_df['Status'].astype(str).str.strip() != ''].sort_values('Count', ascending=False)
+                _fig_st = px.bar(_sc_df, x='Status', y='Count',
+                                 color='Status',
+                                 color_discrete_sequence=['#8b5cf6','#6ee7b7','#f97316','#60a5fa','#ec4899','#fbbf24'],
+                                 text='Count')
+                _fig_st.update_traces(textposition='outside')
+                _fig_st.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                      font_color='#e2e8f0', showlegend=False,
+                                      xaxis=dict(showgrid=False, tickangle=-30),
+                                      yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                      margin=dict(t=10, b=10))
+                st.plotly_chart(_fig_st, use_container_width=True)
+            else:
+                st.info("No Status column found in Summary Tracker.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _p2:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("👤 Studies by Analyst")
+            _done_col = next((c for c in _df_sum.columns if "done" in c.lower() or "by" in c.lower()), None)
+            if _done_col:
+                _by_df = _df_sum[_done_col].astype(str).str.strip()
+                _by_df = _by_df[_by_df.str.lower().isin(['', 'nan']) == False].value_counts().reset_index()
+                _by_df.columns = ['Analyst', 'Studies']
+                _fig_by = px.pie(_by_df, values='Studies', names='Analyst', hole=0.45,
+                                 color_discrete_sequence=['#8b5cf6','#3b82f6','#10b981','#f97316','#ec4899','#fbbf24'])
+                _fig_by.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                      margin=dict(t=10, b=10),
+                                      legend=dict(orientation="h", y=-0.2, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_by, use_container_width=True)
+            else:
+                st.info("No 'Done by' column found in Summary Tracker.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        st.warning("⚠️ Could not load Summary Tracker data. Check Google Sheets connection.")
+
+    # ── Section: Big Data Insights ────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🧬 Big Data Landscape — from All Studies Sheet")
+
+    _df_big_ov = load_tracker_csv(BIGDATA_CSV, BIGDATA_WS, local_fallback=BIGDATA_FB)
+
+    if _df_big_ov is not None and not _df_big_ov.empty:
+        _df_big_ov.columns = [c.strip() for c in _df_big_ov.columns]
+
+        # KPI row
+        _total_big   = len(_df_big_ov)
+        _uniq_studies = _df_big_ov.get('studyId_ena_sra', pd.Series()).nunique()
+        _tissues      = _df_big_ov.get('tissue', pd.Series()).replace('', pd.NA).dropna().nunique()
+        _org_col      = next((c for c in _df_big_ov.columns if 'organism' in c.lower()), None)
+        _orgs         = _df_big_ov[_org_col].nunique() if _org_col else 0
+
+        st.markdown(f"""
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.4rem;padding:1rem 1.5rem;
+                    background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:12px;">
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Total Samples</span><br>
+            <strong style="font-size:1.6rem;color:#f1f5f9;">{_total_big:,}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Unique Studies</span><br>
+            <strong style="font-size:1.6rem;color:#6ee7b7;">{_uniq_studies}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Unique Tissues</span><br>
+            <strong style="font-size:1.6rem;color:#60a5fa;">{_tissues}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Organisms</span><br>
+            <strong style="font-size:1.6rem;color:#f472b6;">{_orgs}</strong>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        _b1, _b2, _b3 = st.columns(3)
+
+        with _b1:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("🧫 Top Tissues")
+            if 'tissue' in _df_big_ov.columns:
+                _tis = _df_big_ov['tissue'].replace('', pd.NA).dropna()
+                _tis = _tis[_tis.str.lower() != 'nan'].value_counts().head(12).reset_index()
+                _tis.columns = ['Tissue', 'Count']
+                _fig_t = px.bar(_tis, x='Count', y='Tissue', orientation='h',
+                                color='Count', color_continuous_scale=['#1e1b4b','#7c3aed','#06b6d4'],
+                                text='Count')
+                _fig_t.update_traces(textposition='outside')
+                _fig_t.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                     font_color='#e2e8f0', coloraxis_showscale=False, height=360,
+                                     yaxis=dict(showgrid=False, autorange='reversed'),
+                                     xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                     margin=dict(t=10, b=10))
+                st.plotly_chart(_fig_t, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _b2:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("⚧ Sex Distribution")
+            if 'sex' in _df_big_ov.columns:
+                _sex = _df_big_ov['sex'].replace('', pd.NA).dropna()
+                _sex = _sex[_sex.str.lower() != 'nan'].value_counts().reset_index()
+                _sex.columns = ['Sex', 'Count']
+                _fig_sex = px.pie(_sex, values='Count', names='Sex', hole=0.45,
+                                  color_discrete_sequence=['#8b5cf6','#ec4899','#60a5fa','#10b981'])
+                _fig_sex.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                       margin=dict(t=10, b=10),
+                                       legend=dict(orientation="h", y=-0.15, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_sex, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _b3:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📚 Library Strategy")
+            if 'library_strategy' in _df_big_ov.columns:
+                _lib = _df_big_ov['library_strategy'].replace('', pd.NA).dropna()
+                _lib = _lib[_lib.str.lower() != 'nan'].value_counts().head(8).reset_index()
+                _lib.columns = ['Strategy', 'Count']
+                _fig_lib = px.pie(_lib, values='Count', names='Strategy', hole=0.45,
+                                  color_discrete_sequence=['#3b82f6','#8b5cf6','#f97316','#10b981','#ec4899'])
+                _fig_lib.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                       margin=dict(t=10, b=10),
+                                       legend=dict(orientation="h", y=-0.15, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_lib, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Read length distribution (full width)
+        if 'read_length' in _df_big_ov.columns:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📏 Read Length Distribution across All Samples")
+            _rl = pd.to_numeric(_df_big_ov['read_length'], errors='coerce').dropna()
+            _fig_rl = px.histogram(_rl, nbins=40,
+                                   color_discrete_sequence=['#8b5cf6'],
+                                   labels={'value': 'Read Length (bp)', 'count': 'Samples'})
+            _fig_rl.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                  font_color='#e2e8f0', showlegend=False,
+                                  xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                  yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                  margin=dict(t=10, b=10))
+            st.plotly_chart(_fig_rl, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        st.warning("⚠️ Could not load Big Data sheet. Check Google Sheets connection.")
 
     conn.close()
 
@@ -766,6 +929,7 @@ elif mode == "🔍 Study Explorer":
                 "Comments": row['comments'],
             }
             df_meta = pd.DataFrame(meta.items(), columns=["Field", "Value"])
+            df_meta['Value'] = df_meta['Value'].astype(str)
             st.dataframe(df_meta, use_container_width=True, hide_index=True)
 
         with tab4:

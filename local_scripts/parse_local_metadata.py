@@ -3,7 +3,8 @@ import sys
 import pandas as pd
 import argparse
 
-METADATA_DIR = "/home/surajkumar.sharma/Documents/AbbVie/metadata"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+METADATA_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "..", "metadata"))
 
 def parse_local_metadata(srp_id):
     # Find the file in the metadata directory

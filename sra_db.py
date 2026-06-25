@@ -4,11 +4,12 @@ import pandas as pd
 import csv
 from datetime import datetime
 
-# Define database file path
-DB_FILE = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/sra_metadata.db"
-SAMPLESHEETS_DIR = "/home/surajkumar.sharma/Documents/AbbVie/samplesheet"
-FINALLIST_CSV = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/studies_82.csv"
-PIPELINE_CSV = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/pipeline_info.csv"
+# Define database file path relative to this script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "sra_metadata.db")
+SAMPLESHEETS_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "samplesheet"))
+FINALLIST_CSV = os.path.join(BASE_DIR, "studies_82.csv")
+PIPELINE_CSV = os.path.abspath(os.path.join(BASE_DIR, "..", "pipeline_info.csv"))
 
 def init_db():
     """
@@ -125,18 +126,16 @@ def init_db():
     """)
 
     # Create issue_studies table — tracks studies that cannot be processed
+    cursor.execute("DROP TABLE IF EXISTS issue_studies")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS issue_studies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            study_id TEXT NOT NULL,
-            disease_category TEXT,
+            study_id TEXT,
+            pubmed_id TEXT,
+            geo_id TEXT,
             issue_type TEXT,
-            issue_description TEXT,
-            date_flagged TEXT,
-            flagged_by TEXT,
-            priority TEXT,
-            resolution_status TEXT,
-            notes TEXT,
+            severity TEXT,
+            comments TEXT,
             last_updated TEXT DEFAULT (datetime('now'))
         )
     """)
@@ -179,15 +178,12 @@ def populate_issue_studies(excel_path=None, worksheet="Issue_tracker"):
                 return match[0]
         return None
 
-    col_study   = fc(df, "study", "id")
-    col_disease = fc(df, "disease", "category")
-    col_type    = fc(df, "issue_type", "type")
-    col_desc    = fc(df, "description", "reason")
-    col_date    = fc(df, "date", "flagged")
-    col_by      = fc(df, "flagged_by", "analyst", "by")
-    col_pri     = fc(df, "priority")
-    col_status  = fc(df, "status", "resolution")
-    col_notes   = fc(df, "notes", "comment")
+    col_study   = fc(df, "StudyId", "study", "id")
+    col_pubmed  = fc(df, "pubmedId", "pubmed")
+    col_geo     = fc(df, "GSE_id", "geo")
+    col_type    = fc(df, "Issues", "issue_type", "type")
+    col_severity = fc(df, "Severity", "severity")
+    col_comments = fc(df, "Comments", "comment")
 
     if not col_study:
         print("⚠️ Could not find a Study ID column in the worksheet.")
@@ -203,22 +199,17 @@ def populate_issue_studies(excel_path=None, worksheet="Issue_tracker"):
             continue
         records.append((
             sid,
-            str(row.get(col_disease, "") if col_disease else ""),
+            str(row.get(col_pubmed, "") if col_pubmed else ""),
+            str(row.get(col_geo,    "") if col_geo    else ""),
             str(row.get(col_type,    "") if col_type    else ""),
-            str(row.get(col_desc,    "") if col_desc    else ""),
-            str(row.get(col_date,    "") if col_date    else ""),
-            str(row.get(col_by,      "") if col_by      else ""),
-            str(row.get(col_pri,     "") if col_pri     else ""),
-            str(row.get(col_status,  "") if col_status  else ""),
-            str(row.get(col_notes,   "") if col_notes   else ""),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(row.get(col_severity,"") if col_severity else ""),
+            str(row.get(col_comments,"") if col_comments else ""),
         ))
 
     cursor.executemany("""
         INSERT INTO issue_studies (
-            study_id, disease_category, issue_type, issue_description,
-            date_flagged, flagged_by, priority, resolution_status, notes, last_updated
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            study_id, pubmed_id, geo_id, issue_type, severity, comments, last_updated
+        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     """, records)
     conn.commit()
     conn.close()
@@ -362,9 +353,10 @@ def populate_database():
     # 3. Add initial default PPT presentation linking for test references
     cursor.execute("SELECT COUNT(*) FROM linked_ppts")
     if cursor.fetchone()[0] == 0:
+        downloads_dir = os.path.abspath(os.path.join(BASE_DIR, "..", "downloads"))
         default_ppts = [
-            ("SRP246389", "Internship PPT (Schizophrenia hiPSC neurons)", "/home/surajkumar.sharma/Downloads/Internship ppt.pptx", "Slide presentation reviewing epigenetic forebrain schizophrenia results.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            ("SRP115956", "Strand Template Presentation", "/home/surajkumar.sharma/Downloads/Strand PPT Template.pdf", "Generic template for presentation layouts.", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            ("SRP246389", "Internship PPT (Schizophrenia hiPSC neurons)", os.path.join(downloads_dir, "Internship ppt.pptx"), "Slide presentation reviewing epigenetic forebrain schizophrenia results.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            ("SRP115956", "Strand Template Presentation", os.path.join(downloads_dir, "Strand PPT Template.pdf"), "Generic template for presentation layouts.", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         ]
         cursor.executemany("""
             INSERT INTO linked_ppts (study_id, ppt_name, ppt_path, description, added_date)

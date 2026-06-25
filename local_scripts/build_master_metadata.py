@@ -3,9 +3,10 @@ import glob
 import pandas as pd
 import sqlite3
 
-METADATA_DIR = "/home/surajkumar.sharma/Documents/AbbVie/metadata"
-DB_FILE = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/Psychiatric-Disorders-SRA-Dashboard/sra_metadata.db"
-OUTPUT_CSV = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/Psychiatric-Disorders-SRA-Dashboard/master_sample_metadata.csv"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+METADATA_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "..", "metadata"))
+DB_FILE = os.path.abspath(os.path.join(BASE_DIR, "..", "sra_metadata.db"))
+OUTPUT_CSV = os.path.abspath(os.path.join(BASE_DIR, "..", "master_sample_metadata.csv"))
 
 def build_master_metadata():
     print(f"🔍 Scanning {METADATA_DIR} for metadata TSVs...")
