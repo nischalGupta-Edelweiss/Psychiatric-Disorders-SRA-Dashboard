@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  sra-dashboard:
+    image: sra-dashboard:latest
+    # To build instead of using a pre-built image, comment the line above and uncomment:
+    # build: .
+    container_name: sra-dashboard
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount your local secrets.toml into the container (read-only)
+      # The file must exist on the host before running docker compose up
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+      # Optional: persist the SQLite DB across container restarts
+      - sra_db:/app/data
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  sra_db:
