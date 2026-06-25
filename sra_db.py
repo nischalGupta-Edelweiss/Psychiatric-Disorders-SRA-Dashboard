@@ -144,6 +144,26 @@ def init_db():
         )
     """)
 
+    # Create sample_metadata table — tracks sample-level metadata (demographics)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sample_metadata (
+            run_accession TEXT PRIMARY KEY,
+            study_accession TEXT,
+            experiment_accession TEXT,
+            sample_accession TEXT,
+            organism_name TEXT,
+            sample_title TEXT,
+            disease_status TEXT,
+            gender TEXT,
+            tissue TEXT,
+            cell_type TEXT,
+            cell_line TEXT,
+            source_name TEXT,
+            age TEXT,
+            treatment TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
     print("Database tables initialized successfully.")
@@ -428,6 +448,25 @@ def populate_database():
         except Exception as e:
             print(f"Error loading pipeline info: {e}")
             
+    # 5. Parse and ingest master sample metadata (demographics)
+    master_metadata_csv = os.path.join(BASE_DIR, "master_sample_metadata.csv")
+    if os.path.exists(master_metadata_csv):
+        print(f"Loading sample metadata from {master_metadata_csv}...")
+        try:
+            df_sm = pd.read_csv(master_metadata_csv)
+            # Clean string values in cells
+            for col in df_sm.columns:
+                try:
+                    if df_sm[col].dtype == 'object':
+                        df_sm[col] = df_sm[col].apply(lambda val: str(val).strip() if pd.notna(val) and val is not None else val)
+                except Exception:
+                    pass
+            # Write to SQLite
+            df_sm.to_sql('sample_metadata', conn, if_exists='replace', index=False)
+            print(f"Ingested {len(df_sm)} sample metadata records.")
+        except Exception as e:
+            print(f"Error loading sample metadata: {e}")
+
     conn.close()
 
 if __name__ == "__main__":
