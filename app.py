@@ -48,6 +48,18 @@ st.sidebar.markdown("---")
 
 DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+
+# ── Auto-seed DB on first startup (Streamlit Cloud has no pre-built DB) ───────
+if not os.path.exists(DB_FILE):
+    try:
+        import sra_db as _sra_db
+        _sra_db.init_db()
+        _sra_db.populate_database()
+        st.toast("✅ Database initialised on first startup", icon="🗄️")
+    except Exception as _seed_err:
+        st.warning(f"⚠️ DB auto-seed failed: {_seed_err}. Some views may be empty.")
+
+
 def get_sheet_config(sheet_key, default_fallback):
     config_file = os.path.join(os.path.dirname(__file__), "googlesheetlink.csv")
     url = None
