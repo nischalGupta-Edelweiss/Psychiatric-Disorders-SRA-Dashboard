@@ -6,10 +6,12 @@ from datetime import datetime
 
 # Define database file path relative to this script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+print(BASE_DIR)
 DB_FILE = os.path.join(BASE_DIR, "sra_metadata.db")
 # External samplesheet dir — only exists in the original AbbVie workspace.
 # Falls back gracefully to an empty scan so the app still works for others.
 _ext_samplesheets = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "samplesheet"))
+
 SAMPLESHEETS_DIR = _ext_samplesheets if os.path.isdir(_ext_samplesheets) else os.path.join(BASE_DIR, "samplesheet")
 FINALLIST_CSV = os.path.join(BASE_DIR, "studies_82.csv")
 _ext_pipeline = os.path.abspath(os.path.join(BASE_DIR, "..", "pipeline_info.csv"))
