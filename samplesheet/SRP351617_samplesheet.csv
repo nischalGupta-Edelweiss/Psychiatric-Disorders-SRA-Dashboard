@@ -1,0 +1,17 @@
+sample,fastq_1,fastq_2,strandedness
+SRR17276329,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276329.fastq.gz,,auto
+SRR17276330,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276330.fastq.gz,,auto
+SRR17276335,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276335.fastq.gz,,auto
+SRR17276331,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276331.fastq.gz,,auto
+SRR17276334,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276334.fastq.gz,,auto
+SRR17276328,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276328.fastq.gz,,auto
+SRR17276337,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276337.fastq.gz,,auto
+SRR17276324,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276324.fastq.gz,,auto
+SRR17276326,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276326.fastq.gz,,auto
+SRR17276332,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276332.fastq.gz,,auto
+SRR17276336,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276336.fastq.gz,,auto
+SRR17276327,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276327.fastq.gz,,auto
+SRR17276338,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276338.fastq.gz,,auto
+SRR17276325,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276325.fastq.gz,,auto
+SRR17276333,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276333.fastq.gz,,auto
+SRR17276323,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP351617/SRR17276323.fastq.gz,,auto

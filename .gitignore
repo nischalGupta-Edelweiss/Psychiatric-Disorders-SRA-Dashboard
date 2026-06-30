@@ -32,7 +32,6 @@ Thumbs.db
 .vscode/
 
 # ── Large local data files (use Google Sheets / fallback CSVs instead) ───────
-samplesheet/
 metadata/
 *.tsv
 downloads/
