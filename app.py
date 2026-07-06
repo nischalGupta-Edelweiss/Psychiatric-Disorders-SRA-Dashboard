@@ -207,51 +207,128 @@ def _get_gspread_client():
         return None
 
 
+# def _fetch_gspread(spreadsheet_url, worksheet_name):
+#     """
+#     Fetch a worksheet via gspread.
+#     - Extracts the spreadsheet ID from the URL.
+#     - Selects the tab by GID (from URL ?gid=…) first; falls back to name match.
+#     Returns a DataFrame, or None on failure.
+#     """
+#     try:
+#         client = _get_gspread_client()
+#         if client is None:
+#             return None
+
+#         import gspread
+
+#         # Extract spreadsheet ID from URL
+#         m_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', spreadsheet_url)
+#         if not m_id:
+#             print(f"⚠️ Could not parse spreadsheet ID from: {spreadsheet_url}")
+#             return None
+#         spreadsheet_id = m_id.group(1)
+
+#         # Extract GID from URL (preferred — avoids name-matching issues)
+#         m_gid = re.search(r'gid=(\d+)', spreadsheet_url)
+#         target_gid = int(m_gid.group(1)) if m_gid else None
+
+#         sh = client.open_by_key(spreadsheet_id)
+
+#         # Pick worksheet: by GID first, then by name, then first sheet
+#         ws = None
+#         if target_gid is not None:
+#             ws = next((w for w in sh.worksheets() if w.id == target_gid), None)
+#         if ws is None and worksheet_name:
+#             try:
+#                 ws = sh.worksheet(worksheet_name)
+#             except gspread.exceptions.WorksheetNotFound:
+#                 pass
+#         if ws is None:
+#             ws = sh.sheet1
+
+#         data = ws.get_all_records()
+#         df   = pd.DataFrame(data)
+#         print(f"✅ gspread fetched '{ws.title}' (gid={ws.id}) — {len(df)} rows")
+#         return df
+#     except Exception as e:
+#         print(f"⚠️ gspread fetch failed: {e}")
+#         return None
+
 def _fetch_gspread(spreadsheet_url, worksheet_name):
     """
     Fetch a worksheet via gspread.
-    - Extracts the spreadsheet ID from the URL.
-    - Selects the tab by GID (from URL ?gid=…) first; falls back to name match.
-    Returns a DataFrame, or None on failure.
+    - Extracts spreadsheet ID from URL
+    - Tries gid first, then worksheet name, then first sheet
     """
     try:
         client = _get_gspread_client()
         if client is None:
+            print("❌ No gspread client")
             return None
 
         import gspread
+        import traceback
 
-        # Extract spreadsheet ID from URL
+        print(f"🔎 spreadsheet_url = {spreadsheet_url}")
+        print(f"🔎 worksheet_name = {worksheet_name}")
+
+        # Extract spreadsheet ID
         m_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', spreadsheet_url)
         if not m_id:
             print(f"⚠️ Could not parse spreadsheet ID from: {spreadsheet_url}")
             return None
         spreadsheet_id = m_id.group(1)
+        print(f"✅ spreadsheet_id = {spreadsheet_id}")
 
-        # Extract GID from URL (preferred — avoids name-matching issues)
+        # Extract gid if present
         m_gid = re.search(r'gid=(\d+)', spreadsheet_url)
         target_gid = int(m_gid.group(1)) if m_gid else None
+        print(f"🔎 target_gid = {target_gid}")
 
+        # Open spreadsheet
+        print("➡️ Opening spreadsheet by key...")
         sh = client.open_by_key(spreadsheet_id)
+        print(f"✅ Opened spreadsheet: {sh.title}")
 
-        # Pick worksheet: by GID first, then by name, then first sheet
+        # List worksheets
+        print("➡️ Fetching worksheets...")
+        worksheets = sh.worksheets()
+        print("✅ Worksheets found:", [(w.title, w.id) for w in worksheets])
+
+        # Pick worksheet
         ws = None
         if target_gid is not None:
-            ws = next((w for w in sh.worksheets() if w.id == target_gid), None)
+            ws = next((w for w in worksheets if w.id == target_gid), None)
+            print(f"🔎 Worksheet selected by gid: {ws.title if ws else None}")
+
         if ws is None and worksheet_name:
             try:
+                print(f"➡️ Trying worksheet by name: {worksheet_name}")
                 ws = sh.worksheet(worksheet_name)
+                print(f"✅ Worksheet found by name: {ws.title}")
             except gspread.exceptions.WorksheetNotFound:
-                pass
+                print(f"⚠️ Worksheet '{worksheet_name}' not found by name")
+
         if ws is None:
             ws = sh.sheet1
+            print(f"⚠️ Falling back to first sheet: {ws.title}")
 
+        # Pull records
+        print(f"➡️ Reading records from worksheet: {ws.title}")
         data = ws.get_all_records()
-        df   = pd.DataFrame(data)
+        print(f"✅ Pulled {len(data)} rows")
+
+        df = pd.DataFrame(data)
         print(f"✅ gspread fetched '{ws.title}' (gid={ws.id}) — {len(df)} rows")
+        print("Columns:", list(df.columns))
         return df
+
     except Exception as e:
-        print(f"⚠️ gspread fetch failed: {e}")
+        import traceback
+        print("⚠️ gspread fetch failed")
+        print("Exception type:", type(e).__name__)
+        print("Exception repr:", repr(e))
+        traceback.print_exc()
         return None
 
 
