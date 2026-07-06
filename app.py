@@ -991,6 +991,7 @@ elif mode == "🔍 Study Explorer":
             }
 
             df_sum_all = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
+            st.write("Summary tracker columns:", list(df_sum_all.columns))
             if df_sum_all is not None:
                 try:
                     df_sum_all.columns = [c.strip() for c in df_sum_all.columns]
