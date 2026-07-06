@@ -974,7 +974,7 @@ elif mode == "🔍 Study Explorer":
 
         with tab4:
             st.markdown("#### 📊 Summary Tracker")
-            st.caption("Live view from the Summary Tracker CSV. Columns: Dataset Name · Start/End Dates · Status · QC Overview · Counts QC · Done By · Summary Slides link · Comments.")
+            st.caption("Live view from the Summary Tracker CSV. Columns: Dataset Name · Start/End Dates · Status · Uploaded to ODS? · QC Overview · Counts QC · Done By · Summary Slides link · Comments.")
 
             # Column descriptions
             SUMMARY_COL_DESC = {
