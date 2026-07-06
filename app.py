@@ -283,14 +283,14 @@ def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
                 # resolve to "Dashboard used Summary tracker" dynamically.
                 xls = pd.ExcelFile(fb_path)
                 target_ws = ws
-                if ws == "Summary tracker" and "Dashboard used Summary tracker" in xls.sheet_names:
-                    try:
-                        df_test = pd.read_excel(fb_path, sheet_name=ws)
-                        cols_lower = [str(c).lower() for c in df_test.columns]
-                        if not any("dataset" in c or "name" in c for c in cols_lower):
-                            target_ws = "Dashboard used Summary tracker"
-                    except Exception:
-                        pass
+                # if ws == "Summary tracker" and "Dashboard used Summary tracker" in xls.sheet_names:
+                #     try:
+                #         df_test = pd.read_excel(fb_path, sheet_name=ws)
+                #         cols_lower = [str(c).lower() for c in df_test.columns]
+                #         if not any("dataset" in c or "name" in c for c in cols_lower):
+                #             target_ws = "Dashboard used Summary tracker"
+                #     except Exception:
+                #         pass
 
                 try:
                     df = pd.read_excel(fb_path, sheet_name=target_ws)
