@@ -981,6 +981,7 @@ elif mode == "🔍 Study Explorer":
                 "Dataset Name":       "SRA/ERP study accession ID.",
                 "Start Date":         "Date the BE pipeline was kicked off for this study.",
                 "Status":             "Current pipeline/analysis status (e.g. Artemis completed, BE error).",
+                "Uploaded to ODS?":   "Has this dataset been uploaded to ODS?",
                 "End Date (BE)":      "Date the BE pipeline finished processing.",
                 "QC Overview":        "High-level sample QC observations from the analyst.",
                 "Counts QC overview": "QC notes specific to read counts / mapping metrics.",
