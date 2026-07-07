@@ -1,0 +1,12 @@
+sample,fastq_1,fastq_2,strandedness
+ERR8015299,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8015299.fastq.gz,,auto
+ERR7995557,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR7995557.fastq.gz,,auto
+ERR8016700,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8016700.fastq.gz,,auto
+ERR8003136,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8003136.fastq.gz,,auto
+ERR8006951,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8006951.fastq.gz,,auto
+ERR8015302,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8015302.fastq.gz,,auto
+ERR8006933,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8006933.fastq.gz,,auto
+ERR8016751,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8016751.fastq.gz,,auto
+ERR8006931,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8006931.fastq.gz,,auto
+ERR8006952,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8006952.fastq.gz,,auto
+ERR8016702,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/ERP134591/ERR8016702.fastq.gz,,auto

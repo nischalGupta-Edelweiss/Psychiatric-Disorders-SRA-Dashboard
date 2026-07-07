@@ -41,12 +41,54 @@ elif _auth_status is None:
 # Logged in — show user info and logout in sidebar
 _authenticator.logout("🚪 Logout", "sidebar")
 st.sidebar.markdown(f"👤 **{_name}**")
+if st.sidebar.button("🔄 Refresh Live Data"):
+    st.cache_data.clear()
+    st.rerun()
 st.sidebar.markdown("---")
 
 DB_FILE  = os.path.join(os.path.dirname(__file__), "sra_metadata.db")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-SUMMARY_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Copy of Summary tracker.csv")
-PIPELINE_CSV = os.path.join(os.path.dirname(__file__), "Summary-tracker - Pipeline info.csv")
+
+# ── Auto-seed DB on first startup (Streamlit Cloud has no pre-built DB) ───────
+if not os.path.exists(DB_FILE):
+    try:
+        import sra_db as _sra_db
+        _sra_db.init_db()
+        _sra_db.populate_database()
+        st.toast("✅ Database initialised on first startup", icon="🗄️")
+    except Exception as _seed_err:
+        st.warning(f"⚠️ DB auto-seed failed: {_seed_err}. Some views may be empty.")
+
+
+def get_sheet_config(sheet_key, default_fallback):
+    config_file = os.path.join(os.path.dirname(__file__), "googlesheetlink.csv")
+    url = None
+    ws_name = None
+    fallback = os.path.join(os.path.dirname(__file__), default_fallback)
+    if os.path.exists(config_file):
+        try:
+            df = pd.read_csv(config_file)
+            row = df[df['sheet_name'] == sheet_key]
+            if not row.empty:
+                _url = str(row.iloc[0]['url']).strip()
+                if _url and _url.lower() != 'nan':
+                    url = _url
+                if 'worksheet_name' in df.columns:
+                    _ws = str(row.iloc[0]['worksheet_name']).strip()
+                    if _ws and _ws.lower() != 'nan':
+                        ws_name = _ws
+                _fb = str(row.iloc[0]['local_fallback']).strip()
+                if _fb and _fb.lower() != 'nan':
+                    fallback = os.path.join(os.path.dirname(__file__), _fb)
+        except Exception:
+            pass
+    # Returns: (primary_source, worksheet_name, local_fallback_path)
+    return url or fallback, ws_name, fallback
+
+SUMMARY_CSV, SUMMARY_WS, SUMMARY_FB = get_sheet_config("summary_tracker", "Summary-tracker.xlsx")
+PIPELINE_CSV, PIPELINE_WS, PIPELINE_FB = get_sheet_config("pipeline_info", "Summary-tracker.xlsx")
+ISSUE_CSV,   ISSUE_WS,   ISSUE_FB   = get_sheet_config("issue_studies",  "Summary-tracker.xlsx")
+BIGDATA_CSV, BIGDATA_WS, BIGDATA_FB = get_sheet_config("all_studies_bigdata", "all_studies_fallback.csv")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── Premium CSS ───────────────────────────────────────────────────────────────
@@ -137,6 +179,246 @@ section[data-testid="stSidebar"] { background:#0f0f1a; }
 </style>
 """, unsafe_allow_html=True)
 
+import hashlib
+import re
+
+# ── gspread client (built once, cached) ───────────────────────────────────────
+@st.cache_resource
+def _get_gspread_client():
+    """Return an authorised gspread client using the service-account from secrets."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        raw = dict(st.secrets["connections"]["gsheets"])
+        raw.pop("type", None)           # gspread builds its own ServiceAccountCredentials
+        raw.pop("universe_domain", None)
+
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds  = Credentials.from_service_account_info(raw, scopes=scopes)
+        client = gspread.authorize(creds)
+        print("✅ gspread client initialised")
+        return client
+    except Exception as e:
+        print(f"⚠️ gspread init failed: {e}")
+        return None
+
+
+# def _fetch_gspread(spreadsheet_url, worksheet_name):
+#     """
+#     Fetch a worksheet via gspread.
+#     - Extracts the spreadsheet ID from the URL.
+#     - Selects the tab by GID (from URL ?gid=…) first; falls back to name match.
+#     Returns a DataFrame, or None on failure.
+#     """
+#     try:
+#         client = _get_gspread_client()
+#         if client is None:
+#             return None
+
+#         import gspread
+
+#         # Extract spreadsheet ID from URL
+#         m_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', spreadsheet_url)
+#         if not m_id:
+#             print(f"⚠️ Could not parse spreadsheet ID from: {spreadsheet_url}")
+#             return None
+#         spreadsheet_id = m_id.group(1)
+
+#         # Extract GID from URL (preferred — avoids name-matching issues)
+#         m_gid = re.search(r'gid=(\d+)', spreadsheet_url)
+#         target_gid = int(m_gid.group(1)) if m_gid else None
+
+#         sh = client.open_by_key(spreadsheet_id)
+
+#         # Pick worksheet: by GID first, then by name, then first sheet
+#         ws = None
+#         if target_gid is not None:
+#             ws = next((w for w in sh.worksheets() if w.id == target_gid), None)
+#         if ws is None and worksheet_name:
+#             try:
+#                 ws = sh.worksheet(worksheet_name)
+#             except gspread.exceptions.WorksheetNotFound:
+#                 pass
+#         if ws is None:
+#             ws = sh.sheet1
+
+#         data = ws.get_all_records()
+#         df   = pd.DataFrame(data)
+#         print(f"✅ gspread fetched '{ws.title}' (gid={ws.id}) — {len(df)} rows")
+#         return df
+#     except Exception as e:
+#         print(f"⚠️ gspread fetch failed: {e}")
+#         return None
+
+def _fetch_gspread(spreadsheet_url, worksheet_name):
+    """
+    Fetch a worksheet via gspread.
+    - Extracts spreadsheet ID from URL
+    - Tries gid first, then worksheet name, then first sheet
+    """
+    try:
+        client = _get_gspread_client()
+        if client is None:
+            print("❌ No gspread client")
+            return None
+
+        import gspread
+        import traceback
+
+        print(f"🔎 spreadsheet_url = {spreadsheet_url}")
+        print(f"🔎 worksheet_name = {worksheet_name}")
+
+        # Extract spreadsheet ID
+        m_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', spreadsheet_url)
+        if not m_id:
+            print(f"⚠️ Could not parse spreadsheet ID from: {spreadsheet_url}")
+            return None
+        spreadsheet_id = m_id.group(1)
+        print(f"✅ spreadsheet_id = {spreadsheet_id}")
+
+        # Extract gid if present
+        m_gid = re.search(r'gid=(\d+)', spreadsheet_url)
+        target_gid = int(m_gid.group(1)) if m_gid else None
+        print(f"🔎 target_gid = {target_gid}")
+
+        # Open spreadsheet
+        print("➡️ Opening spreadsheet by key...")
+        sh = client.open_by_key(spreadsheet_id)
+        print(f"✅ Opened spreadsheet: {sh.title}")
+
+        # List worksheets
+        print("➡️ Fetching worksheets...")
+        worksheets = sh.worksheets()
+        print("✅ Worksheets found:", [(w.title, w.id) for w in worksheets])
+
+        # Pick worksheet
+        ws = None
+        if target_gid is not None:
+            ws = next((w for w in worksheets if w.id == target_gid), None)
+            print(f"🔎 Worksheet selected by gid: {ws.title if ws else None}")
+
+        if ws is None and worksheet_name:
+            try:
+                print(f"➡️ Trying worksheet by name: {worksheet_name}")
+                ws = sh.worksheet(worksheet_name)
+                print(f"✅ Worksheet found by name: {ws.title}")
+            except gspread.exceptions.WorksheetNotFound:
+                print(f"⚠️ Worksheet '{worksheet_name}' not found by name")
+
+        if ws is None:
+            ws = sh.sheet1
+            print(f"⚠️ Falling back to first sheet: {ws.title}")
+
+        # Pull records
+        print(f"➡️ Reading records from worksheet: {ws.title}")
+        data = ws.get_all_records()
+        print(f"✅ Pulled {len(data)} rows")
+
+        df = pd.DataFrame(data)
+        print(f"✅ gspread fetched '{ws.title}' (gid={ws.id}) — {len(df)} rows")
+        print("Columns:", list(df.columns))
+        return df
+
+    except Exception as e:
+        import traceback
+        print("⚠️ gspread fetch failed")
+        print("Exception type:", type(e).__name__)
+        print("Exception repr:", repr(e))
+        traceback.print_exc()
+        return None
+
+
+# ── Caching & DB Helpers ──────────────────────────────────────────────────────
+@st.cache_data(ttl=600)
+def load_tracker_csv(path_or_url, worksheet_name=None, local_fallback=None):
+    """Load data via gspread → SQLite cache → local Excel (3-tier fallback)."""
+
+    def _clean_df(df):
+        if df is not None and not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            for col in df.columns:
+                try:
+                    if df[col].dtype == 'object':
+                        df[col] = df[col].apply(lambda val: str(val).strip() if pd.notna(val) and val is not None else val)
+                except Exception:
+                    pass
+        return df
+
+    def _read_local(fb_path, ws):
+        """Read local Excel or CSV file."""
+        if not fb_path or not os.path.exists(fb_path):
+            return None
+        try:
+            if str(fb_path).lower().endswith(('.xlsx', '.xls')):
+                # Smart sheet resolution:
+                # If ws is "Summary tracker" but the local Excel file has a tab named "Dashboard used Summary tracker"
+                # which contains the actual dataset list (while "Summary tracker" is just weekly/daily summaries),
+                # resolve to "Dashboard used Summary tracker" dynamically.
+                xls = pd.ExcelFile(fb_path)
+                target_ws = ws
+                # if ws == "Summary tracker" and "Dashboard used Summary tracker" in xls.sheet_names:
+                #     try:
+                #         df_test = pd.read_excel(fb_path, sheet_name=ws)
+                #         cols_lower = [str(c).lower() for c in df_test.columns]
+                #         if not any("dataset" in c or "name" in c for c in cols_lower):
+                #             target_ws = "Dashboard used Summary tracker"
+                #     except Exception:
+                #         pass
+
+                try:
+                    df = pd.read_excel(fb_path, sheet_name=target_ws)
+                    print(f"📂 Loaded '{target_ws}' tab from local Excel: {os.path.basename(fb_path)}")
+                    return _clean_df(df)
+                except Exception:
+                    df = pd.read_excel(fb_path, sheet_name=0)
+                    print(f"📂 Loaded first tab from local Excel: {os.path.basename(fb_path)}")
+                    return _clean_df(df)
+            return _clean_df(pd.read_csv(fb_path))
+        except Exception as e:
+            print(f"⚠️ Local fallback read failed ({fb_path}): {e}")
+            return None
+
+    if str(path_or_url).startswith("http"):
+        # Unique SQLite table name (keyed on URL + worksheet)
+        hash_str   = f"{path_or_url}_{worksheet_name}" if worksheet_name else path_or_url
+        url_hash   = hashlib.md5(hash_str.encode()).hexdigest()
+        table_name = f"cache_{url_hash}"
+
+        # ── Tier 1: gspread (Google Sheets API via service account) ──────────
+        df = _fetch_gspread(path_or_url, worksheet_name)
+        if df is not None and not df.empty:
+            df = _clean_df(df)
+            # Persist to SQLite cache
+            try:
+                with sqlite3.connect(DB_FILE) as sql_conn:
+                    df.to_sql(table_name, sql_conn, if_exists='replace', index=False)
+            except Exception:
+                pass
+            return df
+
+        # ── Tier 2: SQLite cache (last successful fetch) ──────────────────────
+        try:
+            with sqlite3.connect(DB_FILE) as sql_conn:
+                df = pd.read_sql(f"SELECT * FROM {table_name}", sql_conn)
+                if not df.empty:
+                    print(f"🔄 Loaded '{worksheet_name}' from SQLite cache")
+                    return _clean_df(df)
+        except Exception as sql_e:
+            print(f"⚠️ SQLite cache not found: {sql_e}")
+
+        # ── Tier 3: Local Excel / CSV fallback ───────────────────────────────
+        print(f"📂 Trying local Excel fallback for '{worksheet_name}'...")
+        return _read_local(local_fallback, worksheet_name)
+
+    else:
+        # Direct local file path
+        return _read_local(path_or_url, worksheet_name)
+
+
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 def db():
     return sqlite3.connect(DB_FILE)
@@ -163,7 +445,7 @@ st.markdown("""
 
 # ── Sidebar Nav ───────────────────────────────────────────────────────────────
 st.sidebar.markdown("## 🧭 Navigation")
-mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer"])
+mode = st.sidebar.radio("", ["📊 Overview & Analytics", "🔍 Study Explorer", "⚠️ Issue Studies", "📂 All Studies (Big Data)"])
 
 n_st, n_sa, n_kw = metrics()
 st.sidebar.markdown("---")
@@ -177,21 +459,27 @@ st.sidebar.markdown(f"**🏷️ Disease Categories** `{n_kw}`")
 if mode == "📊 Overview & Analytics":
     st.markdown("## 📈 Overview & Analytics")
 
-    # Top-level processing summary
-    st.markdown("""
-    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.8rem;padding:1.2rem 1.5rem;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;">
-      <div style="flex:1;border-right:1px solid rgba(255,255,255,0.05);">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Total Datasets</span><br>
-        <strong style="font-size:1.8rem;color:#f1f5f9;">82</strong>
-      </div>
-      <div style="flex:1;border-right:1px solid rgba(255,255,255,0.05);">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">BE Complete</span><br>
-        <strong style="font-size:1.8rem;color:#6ee7b7;">42</strong>
-      </div>
-      <div style="flex:1;">
-        <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Artemis Complete</span><br>
-        <strong style="font-size:1.8rem;color:#a5b4fc;">34</strong>
-      </div>
+    # ── Live summary banner from Google Sheet ─────────────────────────────────
+    _df_sum = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
+    _total = len(_df_sum) if _df_sum is not None else 0
+    _art_done = 0
+    _status_counts = {}
+    if _df_sum is not None and not _df_sum.empty:
+        _df_sum.columns = [c.strip() for c in _df_sum.columns]
+        # Status column for the bar chart below
+        _status_col = next((c for c in _df_sum.columns if "status" in c.lower()), None)
+        if _status_col:
+            _status_counts = _df_sum[_status_col].value_counts().to_dict()
+        # Artemis Complete = rows where "End Date Artemis run" has a real date value
+        _art_end_col = next((c for c in _df_sum.columns if "end" in c.lower() and "artemis" in c.lower()), None)
+        if _art_end_col:
+            _art_done = int(_df_sum[_art_end_col].astype(str).str.strip()
+                            .apply(lambda x: x not in ('', 'nan', 'NaT', 'None')).sum())
+
+    st.markdown(f"""
+    <div style="margin-bottom:1.8rem;padding:1.2rem 1.5rem;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;display:inline-block;">
+      <span style="font-size:.8rem;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;">Total Datasets</span><br>
+      <strong style="font-size:1.8rem;color:#f1f5f9;">{_total}</strong>
     </div>
     """, unsafe_allow_html=True)
 
@@ -322,6 +610,163 @@ if mode == "📊 Overview & Analytics":
                            legend=dict(orientation='h', y=-0.15, x=.5, xanchor='center'))
         st.plotly_chart(fig5, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Section: Pipeline Status from Summary Tracker ────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Pipeline Progress — from Summary Tracker")
+
+    if _df_sum is not None and not _df_sum.empty:
+        _p1, _p2 = st.columns(2)
+
+        with _p1:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📊 Study Status Breakdown")
+            if _status_col and _status_counts:
+                _sc_df = pd.DataFrame(list(_status_counts.items()), columns=['Status','Count'])
+                _sc_df = _sc_df[_sc_df['Status'].astype(str).str.strip() != ''].sort_values('Count', ascending=False)
+                _fig_st = px.bar(_sc_df, x='Status', y='Count',
+                                 color='Status',
+                                 color_discrete_sequence=['#8b5cf6','#6ee7b7','#f97316','#60a5fa','#ec4899','#fbbf24'],
+                                 text='Count')
+                _fig_st.update_traces(textposition='outside')
+                _fig_st.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                      font_color='#e2e8f0', showlegend=False,
+                                      xaxis=dict(showgrid=False, tickangle=-30),
+                                      yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                      margin=dict(t=10, b=10))
+                st.plotly_chart(_fig_st, use_container_width=True)
+            else:
+                st.info("No Status column found in Summary Tracker.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _p2:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("👤 Studies by Analyst")
+            _done_col = next((c for c in _df_sum.columns if "done" in c.lower() or "by" in c.lower()), None)
+            if _done_col:
+                _by_df = _df_sum[_done_col].astype(str).str.strip()
+                _by_df = _by_df[_by_df.str.lower().isin(['', 'nan']) == False].value_counts().reset_index()
+                _by_df.columns = ['Analyst', 'Studies']
+                _fig_by = px.pie(_by_df, values='Studies', names='Analyst', hole=0.45,
+                                 color_discrete_sequence=['#8b5cf6','#3b82f6','#10b981','#f97316','#ec4899','#fbbf24'])
+                _fig_by.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                      margin=dict(t=10, b=10),
+                                      legend=dict(orientation="h", y=-0.2, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_by, use_container_width=True)
+            else:
+                st.info("No 'Done by' column found in Summary Tracker.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        st.warning("⚠️ Could not load Summary Tracker data. Check Google Sheets connection.")
+
+    # ── Section: Big Data Insights ────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🧬 Big Data Landscape — from All Studies Sheet")
+
+    _df_big_ov = load_tracker_csv(BIGDATA_CSV, BIGDATA_WS, local_fallback=BIGDATA_FB)
+
+    if _df_big_ov is not None and not _df_big_ov.empty:
+        _df_big_ov.columns = [c.strip() for c in _df_big_ov.columns]
+
+        # KPI row
+        _total_big   = len(_df_big_ov)
+        _uniq_studies = _df_big_ov.get('studyId_ena_sra', pd.Series()).nunique()
+        _tissues      = _df_big_ov.get('tissue', pd.Series()).replace('', pd.NA).dropna().nunique()
+        _org_col      = next((c for c in _df_big_ov.columns if 'organism' in c.lower()), None)
+        _orgs         = _df_big_ov[_org_col].nunique() if _org_col else 0
+
+        st.markdown(f"""
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.4rem;padding:1rem 1.5rem;
+                    background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:12px;">
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Total Samples</span><br>
+            <strong style="font-size:1.6rem;color:#f1f5f9;">{_total_big:,}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Unique Studies</span><br>
+            <strong style="font-size:1.6rem;color:#6ee7b7;">{_uniq_studies}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Unique Tissues</span><br>
+            <strong style="font-size:1.6rem;color:#60a5fa;">{_tissues}</strong>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <span style="font-size:.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;">Organisms</span><br>
+            <strong style="font-size:1.6rem;color:#f472b6;">{_orgs}</strong>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        _b1, _b2, _b3 = st.columns(3)
+
+        with _b1:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("🧫 Top Tissues")
+            if 'tissue' in _df_big_ov.columns:
+                _tis = _df_big_ov['tissue'].replace('', pd.NA).dropna()
+                _tis = _tis[_tis.str.lower() != 'nan'].value_counts().head(12).reset_index()
+                _tis.columns = ['Tissue', 'Count']
+                _fig_t = px.bar(_tis, x='Count', y='Tissue', orientation='h',
+                                color='Count', color_continuous_scale=['#1e1b4b','#7c3aed','#06b6d4'],
+                                text='Count')
+                _fig_t.update_traces(textposition='outside')
+                _fig_t.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                     font_color='#e2e8f0', coloraxis_showscale=False, height=360,
+                                     yaxis=dict(showgrid=False, autorange='reversed'),
+                                     xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                     margin=dict(t=10, b=10))
+                st.plotly_chart(_fig_t, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _b2:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("⚧ Sex Distribution")
+            if 'sex' in _df_big_ov.columns:
+                _sex = _df_big_ov['sex'].replace('', pd.NA).dropna()
+                _sex = _sex[_sex.str.lower() != 'nan'].value_counts().reset_index()
+                _sex.columns = ['Sex', 'Count']
+                _fig_sex = px.pie(_sex, values='Count', names='Sex', hole=0.45,
+                                  color_discrete_sequence=['#8b5cf6','#ec4899','#60a5fa','#10b981'])
+                _fig_sex.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                       margin=dict(t=10, b=10),
+                                       legend=dict(orientation="h", y=-0.15, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_sex, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with _b3:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📚 Library Strategy")
+            if 'library_strategy' in _df_big_ov.columns:
+                _lib = _df_big_ov['library_strategy'].replace('', pd.NA).dropna()
+                _lib = _lib[_lib.str.lower() != 'nan'].value_counts().head(8).reset_index()
+                _lib.columns = ['Strategy', 'Count']
+                _fig_lib = px.pie(_lib, values='Count', names='Strategy', hole=0.45,
+                                  color_discrete_sequence=['#3b82f6','#8b5cf6','#f97316','#10b981','#ec4899'])
+                _fig_lib.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#e2e8f0',
+                                       margin=dict(t=10, b=10),
+                                       legend=dict(orientation="h", y=-0.15, x=0.5, xanchor='center'))
+                st.plotly_chart(_fig_lib, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Read length distribution (full width)
+        if 'read_length' in _df_big_ov.columns:
+            st.markdown('<div class="glass">', unsafe_allow_html=True)
+            st.subheader("📏 Read Length Distribution across All Samples")
+            _rl = pd.to_numeric(_df_big_ov['read_length'], errors='coerce').dropna()
+            _fig_rl = px.histogram(_rl, nbins=40,
+                                   color_discrete_sequence=['#8b5cf6'],
+                                   labels={'value': 'Read Length (bp)', 'count': 'Samples'})
+            _fig_rl.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                  font_color='#e2e8f0', showlegend=False,
+                                  xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                  yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.06)'),
+                                  margin=dict(t=10, b=10))
+            st.plotly_chart(_fig_rl, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        st.warning("⚠️ Could not load Big Data sheet. Check Google Sheets connection.")
 
     conn.close()
 
@@ -544,9 +989,9 @@ elif mode == "🔍 Study Explorer":
             st.caption("Slide links are pulled from the Summary Tracker CSV for this study.")
             # Pull slide link from Summary CSV
             _slide_link = None
-            if os.path.exists(SUMMARY_CSV):
+            _df_sv = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
+            if _df_sv is not None:
                 try:
-                    _df_sv = pd.read_csv(SUMMARY_CSV)
                     _df_sv.columns = [c.strip() for c in _df_sv.columns]
                     _id_col = next((c for c in _df_sv.columns if "dataset" in c.lower() or "name" in c.lower()), _df_sv.columns[0])
                     _slide_col = next((c for c in _df_sv.columns if "slide" in c.lower() or "ppt" in c.lower()), None)
@@ -601,17 +1046,19 @@ elif mode == "🔍 Study Explorer":
                 "Comments": row['comments'],
             }
             df_meta = pd.DataFrame(meta.items(), columns=["Field", "Value"])
+            df_meta['Value'] = df_meta['Value'].astype(str)
             st.dataframe(df_meta, use_container_width=True, hide_index=True)
 
         with tab4:
             st.markdown("#### 📊 Summary Tracker")
-            st.caption("Live view from the Summary Tracker CSV. Columns: Dataset Name · Start/End Dates · Status · QC Overview · Counts QC · Done By · Summary Slides link · Comments.")
+            st.caption("Live view from the Summary Tracker CSV. Columns: Dataset Name · Start/End Dates · Status · Uploaded to ODS? · QC Overview · Counts QC · Done By · Summary Slides link · Comments.")
 
             # Column descriptions
             SUMMARY_COL_DESC = {
                 "Dataset Name":       "SRA/ERP study accession ID.",
                 "Start Date":         "Date the BE pipeline was kicked off for this study.",
                 "Status":             "Current pipeline/analysis status (e.g. Artemis completed, BE error).",
+                "Uploaded to ODS?":   "Has this dataset been uploaded to ODS?",
                 "End Date (BE)":      "Date the BE pipeline finished processing.",
                 "QC Overview":        "High-level sample QC observations from the analyst.",
                 "Counts QC overview": "QC notes specific to read counts / mapping metrics.",
@@ -620,9 +1067,10 @@ elif mode == "🔍 Study Explorer":
                 "Comments":           "Additional notes or caveats about this study's run.",
             }
 
-            if os.path.exists(SUMMARY_CSV):
+            df_sum_all = load_tracker_csv(SUMMARY_CSV, SUMMARY_WS, local_fallback=SUMMARY_FB)
+            
+            if df_sum_all is not None:
                 try:
-                    df_sum_all = pd.read_csv(SUMMARY_CSV)
                     df_sum_all.columns = [c.strip() for c in df_sum_all.columns]
                     # Try matching on 'Dataset Name' column
                     id_col = next((c for c in df_sum_all.columns if 'dataset' in c.lower() or 'name' in c.lower()), df_sum_all.columns[0])
@@ -668,9 +1116,9 @@ elif mode == "🔍 Study Explorer":
                 "Covarites_used":            "Covariates used in the Artemis differential expression model.",
             }
 
-            if os.path.exists(PIPELINE_CSV):
+            df_pi_all = load_tracker_csv(PIPELINE_CSV, PIPELINE_WS, local_fallback=PIPELINE_FB)
+            if df_pi_all is not None:
                 try:
-                    df_pi_all = pd.read_csv(PIPELINE_CSV)
                     df_pi_all.columns = [c.strip() for c in df_pi_all.columns]
                     id_col_pi = next((c for c in df_pi_all.columns if 'study' in c.lower() or 'id' in c.lower()), df_pi_all.columns[0])
                     df_pi = df_pi_all[df_pi_all[id_col_pi].astype(str).str.strip() == sel_id]
@@ -712,3 +1160,450 @@ elif mode == "🔍 Study Explorer":
         st.warning("No studies match the current filters.")
 
     conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODE 3 — ISSUE STUDIES
+# ─────────────────────────────────────────────────────────────────────────────
+elif mode == "⚠️ Issue Studies":
+    st.markdown("## ⚠️ Issue Studies Tracker")
+    st.markdown(
+        '<p style="color:#94a3b8;margin-top:-.8rem;margin-bottom:1.5rem;">'
+        'Studies flagged as unprocessable — tracking root causes, priority, and resolution status.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Load data: 4-tier chain ───────────────────────────────────────────────
+    # Tier 1 → Google Sheets  (via load_tracker_csv)
+    # Tier 2 → issue_studies SQLite table
+    # Tier 3 → local Excel fallback
+    # On any successful load, sync result back to issue_studies DB table
+
+    df_issues = load_tracker_csv(ISSUE_CSV, ISSUE_WS, local_fallback=ISSUE_FB)
+
+    # If loading from Sheets / Excel failed, fall back to SQLite table
+    if df_issues is None or df_issues.empty:
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                df_issues = pd.read_sql("SELECT * FROM issue_studies ORDER BY id", conn)
+                if not df_issues.empty:
+                    print("🗄️ Loaded issue studies from SQLite DB table")
+                    # Map SQLite column names back to expected display names
+                    df_issues = df_issues.rename(columns={
+                        'study_id': 'StudyId',
+                        'pubmed_id': 'pubmedId',
+                        'geo_id': 'GSE_id',
+                        'issue_type': 'Issues',
+                        'severity': 'Severity',
+                        'comments': 'Comments'
+                    })
+        except Exception as _e:
+            print(f"⚠️ DB read failed: {_e}")
+
+    if df_issues is None or df_issues.empty:
+        st.warning(
+            "No issue studies data found. "
+            "Please check your Google Sheet link or local fallback files."
+        )
+    else:
+        df_issues.columns = [c.strip() for c in df_issues.columns]
+        # Drop fully-empty columns (e.g. trailing empty column from Sheets export)
+        df_issues = df_issues.loc[:, df_issues.columns.str.strip() != ""]
+        df_issues = df_issues.dropna(how="all")
+
+        # ── Hard-coded column names matching the real Google Sheet ────────────
+        COL_STUDY    = "StudyId"
+        COL_PUBMED   = "pubmedId"
+        COL_GEO      = "GSE_id"
+        COL_ISSUE    = "Issues"
+        COL_SEVERITY = "Severity"
+        COL_COMMENT  = "Comments"
+
+        # Gracefully alias if column names differ slightly
+        def _find(col):
+            if col in df_issues.columns:
+                return col
+            lc = col.lower()
+            for c in df_issues.columns:
+                if c.lower() == lc:
+                    return c
+            return None
+
+        C_STUDY    = _find(COL_STUDY)    or df_issues.columns[0]
+        C_PUBMED   = _find(COL_PUBMED)
+        C_GEO      = _find(COL_GEO)
+        C_ISSUE    = _find(COL_ISSUE)
+        C_SEVERITY = _find(COL_SEVERITY)
+        C_COMMENT  = _find(COL_COMMENT)
+
+        def _clean(v):
+            s = str(v).strip()
+            return "" if s in ("nan", "None", "N/A") else s
+
+        # ── DB sync with correct schema ───────────────────────────────────────
+        def _sync_issues_to_db(df):
+            try:
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS issue_studies (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            study_id TEXT, pubmed_id TEXT, geo_id TEXT,
+                            issue_type TEXT, severity TEXT, comments TEXT,
+                            last_updated TEXT DEFAULT (datetime('now'))
+                        )
+                    """)
+                    conn.execute("DELETE FROM issue_studies")
+                    for _, r in df.iterrows():
+                        conn.execute("""
+                            INSERT INTO issue_studies
+                                (study_id, pubmed_id, geo_id, issue_type, severity, comments, last_updated)
+                            VALUES (?,?,?,?,?,?,datetime('now'))
+                        """, (
+                            _clean(r.get(C_STUDY,    "")),
+                            _clean(r.get(C_PUBMED,   "") if C_PUBMED   else ""),
+                            _clean(r.get(C_GEO,      "") if C_GEO      else ""),
+                            _clean(r.get(C_ISSUE,    "") if C_ISSUE    else ""),
+                            _clean(r.get(C_SEVERITY, "") if C_SEVERITY else ""),
+                            _clean(r.get(C_COMMENT,  "") if C_COMMENT  else ""),
+                        ))
+                    conn.commit()
+                print(f"🗄️ Synced {len(df)} issue rows to DB")
+            except Exception as _e:
+                print(f"⚠️ DB sync failed: {_e}")
+
+        _sync_issues_to_db(df_issues)
+
+        # ── Severity colour palette ───────────────────────────────────────────
+        SEV_COLOR = {
+            "severe":   ("#ef4444", "rgba(239,68,68,.15)"),
+            "moderate": ("#f97316", "rgba(249,115,22,.15)"),
+            "mild":     ("#eab308", "rgba(234,179,8,.15)"),
+        }
+        def _sev_colors(sev):
+            return SEV_COLOR.get(str(sev).strip().lower(), ("#64748b", "rgba(100,116,139,.12)"))
+
+        # ── Summary metric cards ──────────────────────────────────────────────
+        unique_studies = df_issues[C_STUDY].nunique() if C_STUDY else 0
+        total_rows     = len(df_issues)
+        severe_cnt     = (df_issues[C_SEVERITY].str.lower().str.strip() == "severe").sum() if C_SEVERITY else 0
+        mild_cnt       = (df_issues[C_SEVERITY].str.lower().str.strip() == "mild").sum()   if C_SEVERITY else 0
+
+        st.markdown(f"""
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">Studies Flagged</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fde68a,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{unique_studies}</div>
+            <div class="card-sub">Unique SRP/ERP IDs</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Total Issues</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fca5a5,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{total_rows}</div>
+            <div class="card-sub">Individual issue entries</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Severe</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fca5a5,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{severe_cnt}</div>
+            <div class="card-sub">High-severity issues</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Mild</div>
+            <div class="card-val" style="background:linear-gradient(90deg,#fef08a,#eab308);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">{mild_cnt}</div>
+            <div class="card-sub">Low-severity issues</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Charts row ────────────────────────────────────────────────────────
+        ch1, ch2 = st.columns(2)
+
+        if C_ISSUE:
+            with ch1:
+                st.markdown('<div class="glass">', unsafe_allow_html=True)
+                st.subheader("📊 Issues by Type")
+                df_tc = df_issues[C_ISSUE].value_counts().reset_index()
+                df_tc.columns = ["Issue Type", "Count"]
+                fig_i = px.bar(df_tc, x="Count", y="Issue Type", orientation="h",
+                               color="Issue Type",
+                               color_discrete_sequence=["#f97316","#ef4444","#eab308","#8b5cf6","#3b82f6","#10b981"],
+                               text="Count")
+                fig_i.update_traces(textposition="outside")
+                fig_i.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                    font_color="#e2e8f0", showlegend=False,
+                                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                                    yaxis=dict(showgrid=False), margin=dict(t=10, b=10))
+                st.plotly_chart(fig_i, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        if C_SEVERITY:
+            with ch2:
+                st.markdown('<div class="glass">', unsafe_allow_html=True)
+                st.subheader("🚦 Issues by Severity")
+                df_sv = df_issues[C_SEVERITY].value_counts().reset_index()
+                df_sv.columns = ["Severity", "Count"]
+                fig_s = px.pie(df_sv, values="Count", names="Severity", hole=0.45,
+                               color="Severity",
+                               color_discrete_map={"Severe":"#ef4444","Moderate":"#f97316","Mild":"#eab308"})
+                fig_s.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#e2e8f0",
+                                    margin=dict(t=10, b=10),
+                                    legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"))
+                st.plotly_chart(fig_s, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Sidebar filters ───────────────────────────────────────────────────
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🎛️ Filters")
+        search_iss = st.sidebar.text_input("🔍 Search Study ID / Issue / Comment")
+
+        if C_ISSUE:
+            issue_types = ["All"] + sorted(df_issues[C_ISSUE].dropna().unique().tolist())
+            sel_type = st.sidebar.selectbox("Issue Type", issue_types)
+        else:
+            sel_type = "All"
+
+        if C_SEVERITY:
+            severities = ["All"] + sorted(df_issues[C_SEVERITY].dropna().unique().tolist())
+            sel_sev = st.sidebar.selectbox("Severity", severities)
+        else:
+            sel_sev = "All"
+
+        # ── Apply filters ─────────────────────────────────────────────────────
+        df_filt = df_issues.copy()
+        if search_iss:
+            mask = df_filt.astype(str).apply(
+                lambda col: col.str.contains(search_iss, case=False, na=False)
+            ).any(axis=1)
+            df_filt = df_filt[mask]
+        if sel_type != "All" and C_ISSUE:
+            df_filt = df_filt[df_filt[C_ISSUE] == sel_type]
+        if sel_sev  != "All" and C_SEVERITY:
+            df_filt = df_filt[df_filt[C_SEVERITY] == sel_sev]
+
+        unique_filtered = df_filt[C_STUDY].nunique() if C_STUDY else len(df_filt)
+        st.info(f"⚠️ **{unique_filtered}** studies · **{len(df_filt)}** issue entries match your filters")
+
+        # ── Per-study grouped cards ───────────────────────────────────────────
+        grouped = df_filt.groupby(C_STUDY, sort=False) if C_STUDY else [(None, df_filt)]
+
+        for study_id, grp in grouped:
+            study_id = _clean(study_id) if study_id else "Unknown"
+
+            # Worst severity in this group determines border colour
+            sev_vals = grp[C_SEVERITY].str.lower().str.strip().tolist() if C_SEVERITY else []
+            worst = "severe" if "severe" in sev_vals else ("moderate" if "moderate" in sev_vals else "mild")
+            border_col, bg_col = _sev_colors(worst)
+
+            # External links
+            pubmed_id = _clean(grp.iloc[0].get(C_PUBMED, "")) if C_PUBMED else ""
+            geo_id    = _clean(grp.iloc[0].get(C_GEO,    "")) if C_GEO    else ""
+
+            pubmed_btn = (f'<a href="https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/" target="_blank" '
+                          f'style="background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.5);'
+                          f'border-radius:8px;padding:.3rem .85rem;font-size:.78rem;font-weight:600;'
+                          f'color:#93c5fd;text-decoration:none;margin-right:.5rem;">📄 PubMed: {pubmed_id}</a>'
+                          if pubmed_id else "")
+            geo_btn   = (f'<a href="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={geo_id}" target="_blank" '
+                          f'style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);'
+                          f'border-radius:8px;padding:.3rem .85rem;font-size:.78rem;font-weight:600;'
+                          f'color:#6ee7b7;text-decoration:none;">🧬 GEO: {geo_id}</a>'
+                          if geo_id else "")
+
+            # Build issue rows
+            rows_html = ""
+            for _, r in grp.iterrows():
+                issue   = _clean(r.get(C_ISSUE,    "") if C_ISSUE    else "")
+                sev     = _clean(r.get(C_SEVERITY, "") if C_SEVERITY else "")
+                comment = _clean(r.get(C_COMMENT,  "") if C_COMMENT  else "")
+                ic, ibc = _sev_colors(sev)
+                sev_badge = (f'<span style="background:{ibc};border:1px solid {ic};border-radius:999px;'
+                             f'padding:.15rem .6rem;font-size:.7rem;font-weight:700;color:{ic};">{sev}</span>'
+                             if sev else "")
+                comment_html = f"<br><span style='color:#94a3b8;font-size:.82rem;font-style:italic;'>{comment}</span>" if comment else ""
+                rows_html += (
+                    f'<div style="display:flex;align-items:flex-start;gap:.75rem;padding:.55rem 0;'
+                    f'border-bottom:1px solid rgba(255,255,255,0.05);">'
+                    f'<div style="flex:0 0 auto;padding-top:.1rem;">{sev_badge}</div>'
+                    f'<div style="flex:1;">'
+                    f'<span style="color:#e2e8f0;font-weight:600;font-size:.88rem;">{issue}</span>'
+                    f'{comment_html}'
+                    f'</div>'
+                    f'</div>'
+                )
+
+            card_html = (
+                f'<div class="glass" style="border-left:4px solid {border_col};margin-bottom:1.1rem;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem;">'
+                f'<code style="font-size:1.1rem;color:#f472b6;font-weight:700;">{study_id}</code>'
+                f'<div>{pubmed_btn}{geo_btn}</div>'
+                f'</div>'
+                f'<div style="font-size:.75rem;color:#a78bfa;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem;">'
+                f'{len(grp)} issue{"s" if len(grp)>1 else ""}'
+                f'</div>'
+                f'{rows_html}'
+                f'</div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
+
+        # ── Full table + download ─────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("##### 📋 All Issue Entries (Tabular View)")
+        st.dataframe(df_filt.reset_index(drop=True), use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Export Issue Studies (.csv)",
+            df_filt.to_csv(index=False).encode(),
+            file_name="issue_studies_export.csv",
+            mime="text/csv",
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODE 4 — ALL STUDIES (BIG DATA)
+# ─────────────────────────────────────────────────────────────────────────────
+elif mode == "📂 All Studies (Big Data)":
+    st.markdown("## 📂 All Studies (Big Data)")
+    st.markdown("Explore and filter the comprehensive set of study samples from which our curated dashboard studies are derived.")
+
+    # 1. Load data
+    with st.spinner("Loading Big Data..."):
+        df_big = load_tracker_csv(BIGDATA_CSV, BIGDATA_WS, local_fallback=BIGDATA_FB)
+
+    if df_big is None or df_big.empty:
+        st.warning("⚠️ Could not load Big Data sheet. Please check your configuration, internet connection, or fallback file.")
+    else:
+        # Standardize column names
+        df_big.columns = [c.strip() for c in df_big.columns]
+
+        # 2. Query SQLite for curated study list
+        curated_ids = set()
+        try:
+            with db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT study_id FROM studies")
+                curated_ids = {r[0].strip() for r in cursor.fetchall() if r[0]}
+        except Exception as e:
+            print(f"Error loading curated study IDs: {e}")
+
+        # 3. Add Curated Status calculation
+        study_col = 'studyId_ena_sra' if 'studyId_ena_sra' in df_big.columns else df_big.columns[0]
+        df_big['Curated Status'] = df_big[study_col].apply(
+            lambda x: "Curated" if str(x).strip() in curated_ids else "Non-Curated"
+        )
+
+        # 4. Filters in the Sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🎛️ Big Data Filters")
+        search_q = st.sidebar.text_input("🔍 Search (ID / Title / Tissue / Phenotype)", "")
+
+        curated_options = ["All", "Curated", "Non-Curated"]
+        sel_curated = st.sidebar.selectbox("Curated Status", curated_options, index=0)
+
+        # Defensive extraction of unique options
+        def get_unique_options(col_name):
+            if col_name in df_big.columns:
+                return sorted([str(x).strip() for x in df_big[col_name].dropna().unique() if str(x).strip() != 'nan' and str(x).strip() != ''])
+            return []
+
+        organisms = get_unique_options('organism_name')
+        sel_organism = st.sidebar.selectbox("🧬 Organism", ["All"] + organisms, index=0)
+
+        phenotypes = get_unique_options('phenotype')
+        sel_phenotype = st.sidebar.selectbox("🧠 Phenotype", ["All"] + phenotypes, index=0)
+
+        tissues = get_unique_options('tissue')
+        sel_tissue = st.sidebar.selectbox("🔬 Tissue", ["All"] + tissues, index=0)
+
+        layouts = get_unique_options('library_layout')
+        sel_layout = st.sidebar.selectbox("⛓️ Library Layout", ["All"] + layouts, index=0)
+
+        # 5. Apply Filtering
+        df_filt = df_big.copy()
+
+        if sel_curated == "Curated":
+            df_filt = df_filt[df_filt['Curated Status'] == "Curated"]
+        elif sel_curated == "Non-Curated":
+            df_filt = df_filt[df_filt['Curated Status'] == "Non-Curated"]
+
+        if sel_organism != "All":
+            df_filt = df_filt[df_filt['organism_name'].astype(str).str.strip() == sel_organism]
+
+        if sel_phenotype != "All":
+            df_filt = df_filt[df_filt['phenotype'].astype(str).str.strip() == sel_phenotype]
+
+        if sel_tissue != "All":
+            df_filt = df_filt[df_filt['tissue'].astype(str).str.strip() == sel_tissue]
+
+        if sel_layout != "All":
+            df_filt = df_filt[df_filt['library_layout'].astype(str).str.strip() == sel_layout]
+
+        if search_q:
+            q = search_q.lower()
+            mask = pd.Series(False, index=df_filt.index)
+            for c in [study_col, 'sampleId_srr', 'study_title', 'tissue', 'cell_type', 'phenotype']:
+                if c in df_filt.columns:
+                    mask = mask | df_filt[c].astype(str).str.lower().str.contains(q, na=False)
+            df_filt = df_filt[mask]
+
+        # 6. Create metric cards
+        total_samples = len(df_filt)
+        unique_studies = df_filt[study_col].nunique() if study_col in df_filt.columns else 0
+        curated_count_in_filt = df_filt[df_filt['Curated Status'] == 'Curated'][study_col].nunique() if study_col in df_filt.columns else 0
+        
+        total_reads = pd.to_numeric(df_filt['total_number_of_reads'], errors='coerce').sum() if 'total_number_of_reads' in df_filt.columns else 0
+        avg_read_len = pd.to_numeric(df_filt['read_length'], errors='coerce').mean() if 'read_length' in df_filt.columns else 0
+
+        reads_str = f"{int(total_reads):,}" if pd.notna(total_reads) and total_reads > 0 else "N/A"
+        avg_len_str = f"{avg_read_len:.1f} bp" if pd.notna(avg_read_len) and avg_read_len > 0 else "N/A"
+
+        curated_pct_str = f"{curated_count_in_filt / unique_studies * 100:.1f}%" if unique_studies > 0 else "0.0%"
+
+        st.markdown(f"""
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">Total Samples</div>
+            <div class="card-val">{total_samples:,}</div>
+            <div class="card-sub">▲ In filtered selection</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Unique Studies</div>
+            <div class="card-val">{unique_studies:,}</div>
+            <div class="card-sub">▲ ENA/SRA study accessions</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Curated Studies</div>
+            <div class="card-val">{curated_count_in_filt:,} / {unique_studies}</div>
+            <div class="card-sub">● {curated_pct_str} of filtered studies</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Avg Read Length</div>
+            <div class="card-val">{avg_len_str}</div>
+            <div class="card-sub">● Total Reads: {reads_str}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 7. Render styled DataFrame and CSV export
+        st.markdown("---")
+        st.markdown("### 📋 Big Data Sample Entries")
+        
+        st.info("💡 **Tip:** Studies matching `Curated` status are loaded into the main **🔍 Study Explorer** database with full metadata, sample sheets, and linked presentations.")
+
+        st.download_button(
+            "📥 Export Filtered Big Data (.csv)",
+            df_filt.to_csv(index=False).encode(),
+            file_name="filtered_bigdata_samples.csv",
+            mime="text/csv",
+        )
+
+        cols_to_display = [
+            'Curated Status', study_col, 'sampleId_srr', 'study_title', 
+            'organism_name', 'tissue', 'cell_type', 'phenotype', 'library_strategy',
+            'library_layout', 'total_number_of_reads', 'read_length'
+        ]
+        cols_to_display = [c for c in cols_to_display if c in df_filt.columns]
+
+        st.dataframe(
+            df_filt[cols_to_display].reset_index(drop=True),
+            use_container_width=True,
+            hide_index=True
+        )
+
+

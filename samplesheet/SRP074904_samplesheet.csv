@@ -1,0 +1,17 @@
+sample,fastq_1,fastq_2,strandedness
+SRR3500575,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500575.fastq.gz,,auto
+SRR3500574,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500574.fastq.gz,,auto
+SRR3500573,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500573.fastq.gz,,auto
+SRR3500570,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500570.fastq.gz,,auto
+SRR3500564,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500564.fastq.gz,,auto
+SRR3500563,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500563.fastq.gz,,auto
+SRR3500562,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500562.fastq.gz,,auto
+SRR3500572,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500572.fastq.gz,,auto
+SRR3500569,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500569.fastq.gz,,auto
+SRR3500571,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500571.fastq.gz,,auto
+SRR3500568,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500568.fastq.gz,,auto
+SRR3500576,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500576.fastq.gz,,auto
+SRR3500577,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500577.fastq.gz,,auto
+SRR3500566,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500566.fastq.gz,,auto
+SRR3500567,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500567.fastq.gz,,auto
+SRR3500565,s3://abbvie-strand-psych-internal-us-east-1/dropoff/Neuropsyc/data/fullData/SRP074904/SRR3500565.fastq.gz,,auto

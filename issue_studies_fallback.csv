@@ -1,0 +1,2 @@
+Study_ID,Disease_Category,Issue_Type,Issue_Description,Date_Flagged,Flagged_By,Priority,Resolution_Status,Notes
+SRP000000,Schizophrenia,Data Access,SRA files restricted / dbGaP controlled access required,2024-01-15,Suraj Sharma,High,Open,Requires dbGaP application approval

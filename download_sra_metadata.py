@@ -2,8 +2,9 @@ import os
 import sqlite3
 import subprocess
 
-DB_FILE = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/sra_metadata.db"
-METADATA_DIR = "/home/surajkumar.sharma/Documents/AbbVie/sra_streamlit_app/metadata"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "sra_metadata.db")
+METADATA_DIR = os.path.join(BASE_DIR, "metadata")
 
 os.makedirs(METADATA_DIR, exist_ok=True)
 

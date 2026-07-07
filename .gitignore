@@ -1,0 +1,40 @@
+# ── Secrets & credentials ──────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Database (auto-generated locally via sra_db.py) ────────────────────────
+sra_metadata.db
+*.db-shm
+*.db-wal
+
+# ── Pixi local environment ──────────────────────────────────────────────────
+.pixi/
+
+# ── Python cache ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── OS & editor artefacts ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# ── Large local data files (use Google Sheets / fallback CSVs instead) ───────
+metadata/
+*.tsv
+downloads/
+
+# ── Upload folder (user-uploaded files at runtime) ───────────────────────────
+uploads/
